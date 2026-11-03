@@ -6,7 +6,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'dart:io' show Platform, SocketException;
 
 class ApiClient {
-  static const String _defaultPort = '5001';
+  static const String _defaultPort = '5010';
   static const String _apiPort = String.fromEnvironment('API_PORT', defaultValue: _defaultPort);
   static const String _apiBaseOverride = String.fromEnvironment('API_BASE_URL', defaultValue: '');
   static const String _socketBaseOverride = String.fromEnvironment('SOCKET_BASE_URL', defaultValue: '');
@@ -130,7 +130,7 @@ class ApiClient {
     if (networkError != null) {
       Error.throwWithStackTrace(
         ApiException(
-          'Unable to reach backend. For Android device, pass --dart-define=API_BASE_URL=http://<your-lan-ip>:5001/api/v1 or run adb reverse tcp:5001 tcp:5001 and --dart-define=ANDROID_USE_LOCALHOST=true.',
+          'Unable to reach backend. For Android device, pass --dart-define=API_BASE_URL=http://<your-lan-ip>:5010/api/v1 or run adb reverse tcp:5010 tcp:5010 and --dart-define=ANDROID_USE_LOCALHOST=true.',
           0,
         ),
         networkStack!,
