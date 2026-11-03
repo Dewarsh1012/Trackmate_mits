@@ -62,7 +62,7 @@ export default function AuthorityZones() {
                     <p style={{ margin: '2px 0 0', fontSize: '0.74rem', color: C.textMuted, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Risk zoning and safe-house request intelligence</p>
                 </div>
 
-                <div className="grid-4 responsive-grid" style={{ gap: 16, padding: '20px 28px 0' }}>
+                <div className="grid-4 responsive-grid" style={{ gap: 16, padding: '20px clamp(12px, 3vw, 28px) 0' }}>
                     {summary.map((item) => (
                         <div key={item.label} style={{ ...clayCard, padding: '16px 18px', borderTop: `4px solid ${item.color}` }}>
                             <p style={{ margin: 0, fontSize: '0.68rem', color: C.textMuted, textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 700 }}>{item.label}</p>
@@ -71,7 +71,7 @@ export default function AuthorityZones() {
                     ))}
                 </div>
 
-                <div className="responsive-grid" style={{ padding: '20px 28px 28px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 18 }}>
+                <div className="responsive-grid" style={{ padding: '20px clamp(12px, 3vw, 28px) 28px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(280px, 100%), 1fr))', gap: 18 }}>
                     {zones.length === 0 ? (
                         <div style={{ ...clayCard, gridColumn: '1 / -1', padding: 40, textAlign: 'center', color: C.textMuted, fontWeight: 600 }}>No operational zones established.</div>
                     ) : zones.map((zone) => {

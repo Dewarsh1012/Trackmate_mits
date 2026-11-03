@@ -101,13 +101,13 @@ export default function AuthorityIncidents() {
                 )}
 
                 {/* Stats summary */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 20, padding: '24px 28px 0' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(180px, 100%), 1fr))', gap: 16, padding: '20px clamp(12px, 3vw, 28px) 0' }}>
                     {[
                         { label: 'Total Incidents', value: incidents.length, color: C.primary, gradient: 'rgba(108,99,255,0.05)' },
                         { label: 'Active Reports', value: incidents.filter(i => i.status !== 'resolved').length, color: C.high, gradient: 'rgba(248,113,113,0.05)' },
                         { label: 'Resolved Safe', value: incidents.filter(i => i.status === 'resolved').length, color: C.safe, gradient: 'rgba(52,211,153,0.05)' },
                     ].map((s, i) => (
-                        <div key={i} style={{ ...clayCard, padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 6, background: s.gradient, position: 'relative', overflow: 'hidden' }}>
+                        <div key={i} style={{ ...clayCard, padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 6, background: s.gradient, position: 'relative', overflow: 'hidden' }}>
                             <div style={{ position: 'absolute', top: -10, right: -10, width: 80, height: 80, borderRadius: '50%', background: s.color, opacity: 0.1, filter: 'blur(10px)' }} />
                             <span style={{ fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: C.textMuted }}>{s.label}</span>
                             <span style={{ fontSize: '2.2rem', fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: s.color, lineHeight: 1 }}>{s.value}</span>
@@ -116,9 +116,9 @@ export default function AuthorityIncidents() {
                 </div>
 
                 {/* Table */}
-                <div style={{ padding: '24px 28px 32px' }}>
+                <div style={{ padding: '20px clamp(12px, 3vw, 28px) 32px' }}>
                     <div style={{ ...clayCard, overflow: 'hidden' }}>
-                        <div style={{ overflowX: 'auto' }}>
+                        <div className="clay-table-container">
                             <table className="clay-table">
                                 <thead>
                                     <tr>

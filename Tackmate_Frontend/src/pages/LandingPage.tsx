@@ -294,7 +294,7 @@ export default function LandingPage() {
                         }}
                     />
 
-                    <div style={{ position: 'relative', zIndex: 1, padding: '56px 32px' }}>
+                    <div style={{ position: 'relative', zIndex: 1, padding: 'clamp(28px, 6vw, 56px) clamp(16px, 4vw, 32px)' }}>
                         <div
                             style={{
                                 display: 'inline-flex',
@@ -413,7 +413,7 @@ export default function LandingPage() {
                     <div
                         style={{
                             display: 'grid',
-                            gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))',
+                            gridTemplateColumns: 'repeat(auto-fit, minmax(min(240px, 100%), 1fr))',
                             gap: 16,
                         }}
                     >
@@ -488,7 +488,7 @@ export default function LandingPage() {
                         <div
                             style={{
                                 display: 'grid',
-                                gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                                gridTemplateColumns: 'repeat(auto-fit, minmax(min(220px, 100%), 1fr))',
                                 gap: 14,
                             }}
                         >

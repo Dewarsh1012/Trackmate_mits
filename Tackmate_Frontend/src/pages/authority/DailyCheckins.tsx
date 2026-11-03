@@ -114,13 +114,13 @@ export default function DailyCheckins() {
                 </div>
 
                 {/* Stats Summary */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16, padding: '20px 28px 0' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(180px, 100%), 1fr))', gap: 16, padding: '20px clamp(12px, 3vw, 28px) 0' }}>
                     {[
                         { label: 'Total Check-Ins', value: filteredCheckins.length, color: C.safe, gradient: 'rgba(52,211,153,0.05)', icon: <CheckCircle2 size={20} /> },
                         { label: 'Unique Users', value: uniqueUsers.size, color: C.primary, gradient: 'rgba(108,99,255,0.05)', icon: <User size={20} /> },
                         { label: 'Today\'s Check-Ins', value: todayCount, color: C.moderate, gradient: 'rgba(251,191,36,0.05)', icon: <Calendar size={20} /> },
                     ].map((s, i) => (
-                        <div key={i} style={{ ...clayCard, padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 6, background: s.gradient, position: 'relative', overflow: 'hidden' }}>
+                        <div key={i} style={{ ...clayCard, padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 6, background: s.gradient, position: 'relative', overflow: 'hidden' }}>
                             <div style={{ position: 'absolute', top: -10, right: -10, width: 80, height: 80, borderRadius: '50%', background: s.color, opacity: 0.1, filter: 'blur(10px)' }} />
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                                 <span style={{ fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: C.textMuted }}>{s.label}</span>
@@ -132,7 +132,7 @@ export default function DailyCheckins() {
                 </div>
 
                 {/* Search Bar */}
-                <div style={{ padding: '16px 28px 0' }}>
+                <div style={{ padding: '16px clamp(12px, 3vw, 28px) 0' }}>
                     <div style={{ ...clayCard, padding: '12px 18px', display: 'flex', alignItems: 'center', gap: 12 }}>
                         <Search size={16} color={C.textMuted} />
                         <input
@@ -151,7 +151,7 @@ export default function DailyCheckins() {
                 </div>
 
                 {/* Check-in Table */}
-                <div style={{ padding: '20px 28px 32px' }}>
+                <div style={{ padding: '20px clamp(12px, 3vw, 28px) 32px' }}>
                     <div style={{ ...clayCard, overflow: 'hidden' }}>
                         <style>{`
                             .checkin-table { width: 100%; border-collapse: separate; border-spacing: 0; }
@@ -169,7 +169,7 @@ export default function DailyCheckins() {
                                 <p style={{ fontSize: '0.75rem', fontWeight: 500, color: C.textMuted }}>Tourist check-ins will appear here in real-time.</p>
                             </div>
                         ) : (
-                            <div style={{ overflowX: 'auto' }}>
+                            <div className="clay-table-container">
                                 <table className="checkin-table">
                                     <thead>
                                         <tr>

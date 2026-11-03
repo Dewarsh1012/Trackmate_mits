@@ -475,7 +475,7 @@ export default function BusinessDashboard() {
 
     return (
         <div style={{ minHeight: '100vh', background: C.bg, color: C.text, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
-            <div style={{ maxWidth: 1380, margin: '0 auto', padding: '26px 20px 110px' }}>
+            <div style={{ maxWidth: 1380, margin: '0 auto', padding: 'clamp(14px, 3vw, 26px) clamp(12px, 3vw, 20px) 110px' }}>
                 <div className="top-header" style={{ ...clayCard, padding: '18px 20px', marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
                         <div style={{ width: 42, height: 42, borderRadius: 14, background: 'linear-gradient(135deg, #6C63FF, #8B85FF)', display: 'grid', placeItems: 'center', boxShadow: '0 6px 14px rgba(108,99,255,0.28)' }}>
@@ -517,7 +517,7 @@ export default function BusinessDashboard() {
                     </div>
                 )}
 
-                <section className="responsive-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 14, marginBottom: 16 }}>
+                <section className="responsive-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(160px, 100%), 1fr))', gap: 14, marginBottom: 16 }}>
                     {[
                         {
                             title: 'Safety Score',
@@ -592,8 +592,8 @@ export default function BusinessDashboard() {
                             ) : null}
                         </div>
 
-                        <div style={{ minHeight: 420, height: 420 }}>
-                            <TouristMap lat={effectiveLatitude} lng={effectiveLongitude} zones={zones} highlightZoneId={highlightZoneId} height={420} />
+                        <div className="responsive-map-container" style={{ minHeight: 380, height: 420 }}>
+                            <TouristMap lat={effectiveLatitude} lng={effectiveLongitude} zones={zones} highlightZoneId={highlightZoneId} height="100%" />
                         </div>
 
                         <div style={{ borderTop: `1px solid ${C.border}`, padding: 12, background: C.surfaceAlt, display: 'flex', gap: 8, flexWrap: 'wrap' }}>

@@ -191,7 +191,7 @@ export default function AuthPage() {
                 </div>
             </header>
 
-            <main style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '48px 20px', minHeight: 'calc(100vh - 60px)' }}>
+            <main style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: 'clamp(16px, 4vw, 48px) clamp(12px, 3vw, 20px)', minHeight: 'calc(100vh - 60px)' }}>
                 <div style={{ width: '100%', maxWidth: 680 }}>
                     {/* Mode toggle tabs */}
                     <div style={{ display: 'flex', background: C.surfaceAlt, borderRadius: '20px 20px 0 0', padding: 4, boxShadow: 'inset 3px 3px 6px rgba(27,29,42,0.06), inset -2px -2px 4px rgba(255,255,255,0.8)' }}>
@@ -209,7 +209,7 @@ export default function AuthPage() {
                     </div>
 
                     {/* Main card */}
-                    <div style={{ background: C.surface, borderRadius: '0 0 24px 24px', padding: '32px 32px 40px', boxShadow: '10px 10px 20px rgba(27,29,42,0.12), -5px -5px 15px rgba(255,255,255,0.95)', border: `1px solid ${C.border}`, borderTop: 'none' }}>
+                    <div style={{ background: C.surface, borderRadius: '0 0 24px 24px', padding: 'clamp(20px, 4vw, 36px) clamp(16px, 4vw, 32px)', boxShadow: '10px 10px 20px rgba(27,29,42,0.12), -5px -5px 15px rgba(255,255,255,0.95)', border: `1px solid ${C.border}`, borderTop: 'none' }}>
                         {errorMsg && (
                             <div style={{ background: 'rgba(248,113,113,0.08)', border: `1px solid rgba(248,113,113,0.2)`, borderRadius: 14, padding: '10px 16px', marginBottom: 24, color: C.critical, fontSize: '0.88rem', fontWeight: 700 }}>
                                 {errorMsg}
@@ -222,14 +222,14 @@ export default function AuthPage() {
                             <>
                                 <div style={{ marginBottom: 24 }}>
                                     <div style={{ fontSize: '0.7rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', color: C.textMuted, marginBottom: 14, paddingBottom: 8, borderBottom: `1px solid ${C.border}` }}>Select Your Role</div>
-                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
+                                    <div className="auth-role-grid">
                                         {roles.map(r => (
                                             <button
                                                 key={r.id}
                                                 onClick={() => setRole(r.id)}
                                                 type="button"
                                                 style={{
-                                                    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, padding: '14px 8px',
+                                                    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, padding: '12px 6px',
                                                     background: role === r.id ? `${r.color}12` : C.surfaceAlt,
                                                     border: role === r.id ? `2px solid ${r.color}40` : `1px solid ${C.border}`,
                                                     borderRadius: 16,
@@ -322,7 +322,7 @@ function RegisterForm({ role, onSubmit }: { role: RegisterRole; onSubmit: (data:
 
     return (
         <form onSubmit={handleSubmit(onSubmit)} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+            <div className="auth-field-grid">
                 <div><label style={labelStyle}>{t('fullName')}</label><input {...register('full_name')} style={inputStyle} placeholder="Legal Name" />{errors.full_name && <p style={errStyle}>{errors.full_name.message as string}</p>}</div>
                 <div><label style={labelStyle}>{t('phone')}</label><input {...register('phone')} style={inputStyle} placeholder="+91 ..." />{errors.phone && <p style={errStyle}>{errors.phone.message as string}</p>}</div>
             </div>
@@ -331,12 +331,12 @@ function RegisterForm({ role, onSubmit }: { role: RegisterRole; onSubmit: (data:
             {role === 'tourist' && (
                 <div style={sectionBoxStyle}>
                     <div style={{ fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 14, color: '#6C63FF' }}>{t('touristDetails')}</div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                    <div className="auth-field-grid">
                         <div><label style={labelStyle}>{t('idType')}</label><select {...register('id_type')} style={inputStyle}><option value="aadhaar">Aadhaar</option><option value="passport">Passport</option><option value="voter_id">Voter ID</option><option value="driving_license">Driving License</option></select></div>
                         <div><label style={labelStyle}>{t('idNumber')}</label><input {...register('id_number')} style={inputStyle} />{errors.id_number && <p style={errStyle}>{errors.id_number.message as string}</p>}</div>
                     </div>
                     <div style={{ marginTop: 12 }}><label style={labelStyle}>{t('destinationRegionKey')}</label><input {...register('destination_region')} style={inputStyle} placeholder="e.g. Tawang District" />{errors.destination_region && <p style={errStyle}>{errors.destination_region.message as string}</p>}</div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 12 }}>
+                    <div className="auth-field-grid" style={{ marginTop: 12 }}>
                         <div><label style={labelStyle}>{t('tripStart')}</label><input {...register('trip_start_date')} type="date" style={inputStyle} />{errors.trip_start_date && <p style={errStyle}>{errors.trip_start_date.message as string}</p>}</div>
                         <div><label style={labelStyle}>{t('tripEnd')}</label><input {...register('trip_end_date')} type="date" style={inputStyle} />{errors.trip_end_date && <p style={errStyle}>{errors.trip_end_date.message as string}</p>}</div>
                     </div>
@@ -354,7 +354,7 @@ function RegisterForm({ role, onSubmit }: { role: RegisterRole; onSubmit: (data:
                 <div style={sectionBoxStyle}>
                     <div style={{ fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 12, color: '#FBBF24' }}>{t('businessDetails')}</div>
                     <div><label style={labelStyle}>{t('businessName')}</label><input {...register('business_name')} style={inputStyle} />{errors.business_name && <p style={errStyle}>{errors.business_name.message as string}</p>}</div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 12 }}>
+                    <div className="auth-field-grid" style={{ marginTop: 12 }}>
                         <div><label style={labelStyle}>{t('category')}</label><select {...register('category')} style={inputStyle}><option value="accommodation">Accommodation</option><option value="food_beverage">Food & Beverage</option><option value="tour_operator">Tour Operator</option></select></div>
                         <div><label style={labelStyle}>{t('wardId')}</label><input {...register('ward_id')} style={inputStyle} />{errors.ward_id && <p style={errStyle}>{errors.ward_id.message as string}</p>}</div>
                     </div>
@@ -365,7 +365,7 @@ function RegisterForm({ role, onSubmit }: { role: RegisterRole; onSubmit: (data:
             {role === 'authority' && (
                 <div style={sectionBoxStyle}>
                     <div style={{ fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 12, color: '#A78BFA' }}>{t('authDetails')}</div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                    <div className="auth-field-grid">
                         <div><label style={labelStyle}>{t('department')}</label><input {...register('department')} style={inputStyle} placeholder="e.g. Police" />{errors.department && <p style={errStyle}>{errors.department.message as string}</p>}</div>
                         <div><label style={labelStyle}>{t('designation')}</label><input {...register('designation')} style={inputStyle} placeholder="e.g. Inspector" />{errors.designation && <p style={errStyle}>{errors.designation.message as string}</p>}</div>
                     </div>
@@ -377,7 +377,7 @@ function RegisterForm({ role, onSubmit }: { role: RegisterRole; onSubmit: (data:
                 </div>
             )}
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+            <div className="auth-field-grid">
                 <div><label style={labelStyle}>{t('password')}</label><input {...register('password')} type="password" style={inputStyle} placeholder="••••••••" />{errors.password && <p style={errStyle}>{errors.password.message as string}</p>}</div>
                 <div><label style={labelStyle}>{t('confirmPassword')}</label><input {...register('confirm_password')} type="password" style={inputStyle} placeholder="••••••••" />{errors.confirm_password && <p style={errStyle}>{errors.confirm_password.message as string}</p>}</div>
             </div>

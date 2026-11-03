@@ -62,8 +62,8 @@ export default function AuthorityRosters() {
                     </div>
                 </div>
 
-                <div style={{ padding: '24px 28px' }}>
-                    <div style={{ ...clayCard, overflowX: 'auto' }}>
+                <div style={{ padding: '20px clamp(12px, 3vw, 28px)' }}>
+                    <div className="clay-table-container" style={{ ...clayCard, overflowX: 'auto' }}>
                         <table className="geo-table">
                             <thead>
                                 <tr>

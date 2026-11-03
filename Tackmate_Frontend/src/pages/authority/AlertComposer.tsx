@@ -100,7 +100,7 @@ export default function AlertComposer() {
             <AuthoritySidebar />
             <main className="page-with-sidebar" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: '100vh', padding: 0 }}>
                 {/* Header */}
-                <div style={{ background: C.surface, borderBottom: `1px solid ${C.border}`, padding: '16px 28px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ background: C.surface, borderBottom: `1px solid ${C.border}`, padding: '16px 28px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 14 }}>
                     <div>
                         <h1 style={{ fontSize: '1.4rem', fontWeight: 800, color: C.text, margin: 0 }}>Alert Broadcaster</h1>
                         <p style={{ fontSize: '0.75rem', color: C.textMuted, margin: 0, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Compose & Send Real-Time Alerts</p>
@@ -111,7 +111,7 @@ export default function AlertComposer() {
                     </div>
                 </div>
 
-                <div className="responsive-grid responsive-container" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, padding: '24px 28px', flex: 1 }}>
+                <div className="responsive-grid responsive-container" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, padding: '20px clamp(12px, 3vw, 28px)', flex: 1 }}>
                     {/* ── Compose Panel ── */}
                     <div style={{ ...clayCard, padding: '28px', display: 'flex', flexDirection: 'column', gap: 20 }}>
                         <h2 style={{ fontSize: '0.85rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', margin: 0, borderBottom: `1px solid ${C.border}`, paddingBottom: 12, color: C.text }}>

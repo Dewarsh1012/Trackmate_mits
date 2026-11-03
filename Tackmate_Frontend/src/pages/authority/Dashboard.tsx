@@ -413,7 +413,7 @@ export default function AuthorityDashboard() {
                             {user?.full_name} · {user?.designation || t('authorityOfficer')}
                         </p>
                     </div>
-                    <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                    <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
                         {/* Role breakdown badges */}
                         {roleBadges.map((rb, i) => (
                             <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, background: `${rb.color}12`, padding: '6px 14px', borderRadius: 12, border: `1px solid ${rb.color}20` }}>
@@ -450,12 +450,13 @@ export default function AuthorityDashboard() {
                                     alignItems: 'center',
                                     justifyContent: 'space-between',
                                     gap: 18,
+                                    flexWrap: 'wrap',
                                     animation: 'nb-pulse 1.2s infinite',
                                     borderBottom: '2px solid #991B1B',
                                     boxShadow: '0 4px 14px rgba(185,28,28,0.35)',
                                     zIndex: 900,
                                 }}>
-                                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, minWidth: 0, flex: 1 }}>
+                                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, minWidth: 0, flex: '1 1 280px' }}>
                                         <AlertTriangle size={24} color="#FFFFFF" strokeWidth={2.5} style={{ marginTop: 4, flexShrink: 0 }} />
                                         <div style={{ minWidth: 0, flex: 1 }}>
                                             <h2 style={{ color: '#FFFFFF', fontWeight: 900, margin: 0, fontSize: '1rem', letterSpacing: '0.04em' }}>
@@ -491,11 +492,11 @@ export default function AuthorityDashboard() {
                                         </div>
                                     </div>
 
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'flex-end' }}>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'flex-start', flex: '0 0 auto' }}>
                                         <span style={{ background: confidenceColor, color: '#7F1D1D', borderRadius: 999, padding: '3px 10px', fontSize: '0.65rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
                                             {risk.confidenceBand} confidence
                                         </span>
-                                        <div style={{ display: 'flex', gap: 12 }}>
+                                        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
                                             <button onClick={() => setFocusLocation({ lat: alert.latitude, lng: alert.longitude })} style={{ background: 'rgba(255,255,255,0.2)', backdropFilter: 'blur(4px)', border: '1px solid rgba(255,255,255,0.3)', borderRadius: 10, padding: '8px 16px', fontFamily: 'inherit', fontWeight: 800, cursor: 'pointer', color: '#FFFFFF', fontSize: '0.8rem', transition: 'all 0.2s' }}>
                                                 Track Location
                                             </button>
@@ -521,7 +522,7 @@ export default function AuthorityDashboard() {
 
 
                 {/* Stat Cards */}
-                <div className="grid-4 responsive-grid" style={{ gap: 16, padding: '20px 28px 0' }}>
+                <div className="grid-4 responsive-grid" style={{ gap: 16, padding: '20px clamp(12px, 3vw, 28px) 0' }}>
                     {statCards.map((s, i) => (
                         <div key={i} style={{
                             ...clayCard,
@@ -542,14 +543,14 @@ export default function AuthorityDashboard() {
                     ))}
                 </div>
                 {/* Live Monitoring Panel */}
-                <div className="responsive-container" style={{ padding: '16px 28px 0' }}>
-                    <div style={{ ...clayCard, padding: '16px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
+                <div className="responsive-container" style={{ padding: '16px clamp(12px, 3vw, 28px) 0' }}>
+                    <div style={{ ...clayCard, padding: '16px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
                         <div>
                             <p style={{ margin: 0, fontSize: '0.7rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: C.textMuted }}>Live Monitoring</p>
                             <h3 style={{ margin: '4px 0 0', fontWeight: 800, color: C.text, fontSize: '1rem' }}>OpenStreetMap Authority Command Live Map</h3>
                             <p style={{ margin: '4px 0 0', fontSize: '0.78rem', color: C.textMuted }}>Tracking {Object.keys(userLocations).length} live devices across zones.</p>
                         </div>
-                        <div style={{ display: 'flex', gap: 10 }}>
+                        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                             <button
                                 onClick={() => {
                                     setFilteredUser(null);
@@ -573,8 +574,8 @@ export default function AuthorityDashboard() {
                 </div>
 
                 {/* Map */}
-                <div className="responsive-container" style={{ padding: '20px 28px 0', flex: 1, position: 'relative', minHeight: 480 }}>
-                    <div style={{ ...clayCard, overflow: 'hidden', height: 480, position: 'relative', padding: 0 }}>
+                <div className="responsive-container" style={{ padding: '20px clamp(12px, 3vw, 28px) 0', flex: 1, position: 'relative', minHeight: 400 }}>
+                    <div className="responsive-map-container" style={{ ...clayCard, overflow: 'hidden', height: 480, position: 'relative', padding: 0 }}>
                         <AuthorityMap
                             zones={zones}
                             incidents={incidents}

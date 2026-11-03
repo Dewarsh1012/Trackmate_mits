@@ -284,7 +284,7 @@ export default function TouristDashboard() {
                         <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '0.75rem', margin: 0, fontWeight: 500 }}>{t('locationMonitored')} {activeTrip?.destination_region || t('localAuthorities')}.</p>
                     </div>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                     <AlertPanel />
                     <div style={{ background: 'linear-gradient(135deg, #6C63FF, #8B85FF)', borderRadius: 12, padding: '8px 16px', fontWeight: 700, fontSize: '0.78rem', color: '#FFFFFF', boxShadow: '0 4px 12px rgba(108,99,255,0.3)' }}>{t('safetyScore')}: {safetyScore}%</div>
                 </div>
@@ -292,10 +292,10 @@ export default function TouristDashboard() {
 
             <div className="responsive-grid responsive-container" style={{ display: 'grid', gridTemplateColumns: '1fr 380px', gap: 20, padding: '20px 24px', maxWidth: 1440, margin: '0 auto' }}>
                 {/* Map column */}
-                <div style={{ ...clayCard, overflow: 'hidden', minHeight: 600, display: 'flex', flexDirection: 'column' }}>
-                    <div style={{ padding: '14px 20px', borderBottom: `1px solid ${C.border}`, background: C.surfaceAlt, display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderRadius: '20px 20px 0 0' }}>
+                <div style={{ ...clayCard, overflow: 'hidden', minHeight: 450, display: 'flex', flexDirection: 'column' }}>
+                    <div style={{ padding: '14px 20px', borderBottom: `1px solid ${C.border}`, background: C.surfaceAlt, display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderRadius: '20px 20px 0 0', flexWrap: 'wrap', gap: 10 }}>
                         <h3 style={{ fontWeight: 800, color: C.text, margin: 0, display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.9rem' }}><MapIcon size={16} color={C.primary} /> {t('liveSafetyGIS')}</h3>
-                        <div style={{ display: 'flex', gap: 8 }}>
+                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                             <button
                                 onClick={() => {
                                     setToast({ message: t('fetchingLocation'), type: 'info' });
@@ -316,10 +316,10 @@ export default function TouristDashboard() {
                             ))}
                         </div>
                     </div>
-                    <div style={{ position: 'relative', flex: 1, minHeight: 400 }}>
-                        <TouristMap lat={userLat} lng={userLng} zones={zones} highlightZoneId={highlightZoneId} />
+                    <div className="responsive-map-container" style={{ position: 'relative', flex: 1, minHeight: 380, height: 420 }}>
+                        <TouristMap lat={userLat} lng={userLng} zones={zones} highlightZoneId={highlightZoneId} height="100%" />
                         {/* Search */}
-                        <div style={{ position: 'absolute', top: 12, left: 12, zIndex: 100, width: 260 }}>
+                        <div style={{ position: 'absolute', top: 12, left: 12, zIndex: 100, width: 'calc(100% - 24px)', maxWidth: 260 }}>
                             <div style={{ position: 'relative' }}>
                                 <MapPin size={13} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: C.textMuted }} />
                                 <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder={t('searchZones')} style={{ width: '100%', padding: '10px 14px 10px 32px', background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, boxShadow: '0 4px 12px rgba(27,29,42,0.08)', fontFamily: "'Plus Jakarta Sans', sans-serif", fontSize: '0.82rem', fontWeight: 600, outline: 'none', color: C.text }} />
@@ -441,7 +441,7 @@ export default function TouristDashboard() {
             </div>
 
             {/* SOS Button */}
-            <div style={{ position: 'fixed', bottom: 80, right: 32, zIndex: 1000 }}>
+            <div style={{ position: 'fixed', bottom: 85, right: 20, zIndex: 1000 }}>
                 {sosSuccess ? (
                     <div style={{ width: 80, height: 80, background: 'linear-gradient(135deg, #34D399, #2DD4BF)', borderRadius: '50%', boxShadow: '0 8px 24px rgba(52,211,153,0.3)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4, color: '#FFFFFF' }}>
                         <Check size={28} /><span style={{ fontSize: '0.55rem', fontWeight: 800, textTransform: 'uppercase' }}>{t('alertSent')}</span>

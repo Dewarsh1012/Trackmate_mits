@@ -3,6 +3,7 @@ import { AuthProvider } from './context/AuthContext';
 import { SocketProvider } from './context/SocketContext';
 import { LanguageProvider } from './i18n';
 import AuthGuard from './components/AuthGuard';
+import MobileNav from './components/layout/MobileNav';
 
 // Public Pages
 import LandingPage from './pages/LandingPage';
@@ -87,7 +88,7 @@ export default function App() {
                             {/* Authority Routes */}
                             <Route path="/authority/*" element={
                                 <AuthGuard role="authority">
-                                    <div className="min-h-screen" style={{ background: 'var(--clay-bg)' }}>
+                                    <div className="min-h-screen pb-[76px] md:pb-0" style={{ background: 'var(--clay-bg)' }}>
                                         <Routes>
                                             <Route path="dashboard" element={<AuthorityDashboard />} />
                                             <Route path="incidents" element={<AuthorityIncidents />} />
@@ -108,6 +109,7 @@ export default function App() {
 
                             <Route path="*" element={<NotFound />} />
                         </Routes>
+                        <MobileNav />
                     </SocketProvider>
                 </AuthProvider>
             </BrowserRouter>

@@ -152,9 +152,9 @@ export default function AuthorityAnalytics() {
     return (
         <div style={{ display: 'flex', minHeight: '100vh', background: C.bg, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
             <AuthoritySidebar />
-            <main className="page-with-sidebar" style={{ flex: 1, padding: '28px' }}>
+            <main className="page-with-sidebar" style={{ flex: 1, padding: 'clamp(14px, 3vw, 28px)' }}>
                 {/* Header */}
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 28 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 28, flexWrap: 'wrap', gap: 14 }}>
                     <div>
                         <h1 style={{ fontSize: '1.5rem', fontWeight: 800, color: C.text, margin: 0, letterSpacing: '-0.01em' }}>Safety Analytics</h1>
                         <p style={{ margin: 0, fontSize: '0.75rem', color: C.textMuted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Crisis Metrics & Trends</p>

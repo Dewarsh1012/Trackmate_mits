@@ -174,7 +174,7 @@ export default function ResidentDashboard() {
     const score = analytics?.safety_score || 85;
 
     return (
-        <div style={{ flex: 1, overflowY: 'auto', padding: 24, background: C.bg, fontFamily: "'Plus Jakarta Sans', sans-serif", paddingBottom: 100 }}>
+        <div style={{ flex: 1, overflowY: 'auto', padding: 'clamp(14px, 3vw, 24px)', background: C.bg, fontFamily: "'Plus Jakarta Sans', sans-serif", paddingBottom: 100 }}>
             {/* No-ward banner */}
             {!user?.ward && (
                 <div style={{ background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.2)', borderRadius: 16, padding: '14px 18px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 10, fontSize: '0.82rem', fontWeight: 600, color: '#92400E' }}>
@@ -191,14 +191,14 @@ export default function ResidentDashboard() {
 
             {/* Ward Header */}
             <section className="responsive-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 160px', gap: 16, marginBottom: 20 }}>
-                <div style={{ ...clayCard, padding: '20px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ ...clayCard, padding: '20px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 14 }}>
                     <div>
                         <h2 style={{ fontSize: '1.4rem', fontWeight: 800, color: C.text, margin: 0 }}>{wardData?.name || t('yourArea')}</h2>
                         <p style={{ margin: '4px 0 0', color: C.textMuted, fontSize: '0.8rem', fontWeight: 500 }}>
                             {wardData ? `Live Monitoring · ${wardData.district}, ${wardData.state}` : 'General Monitoring · All Areas'}
                         </p>
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
                         <AlertPanel />
                         <div style={{ textAlign: 'right' }}>
                             <p style={{ fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', color: C.textMuted, margin: 0 }}>Score</p>
@@ -276,8 +276,8 @@ export default function ResidentDashboard() {
                         <Navigation size={12} color={C.primary} /> Locate Me
                     </button>
                 </div>
-                <div style={{ height: 420, position: 'relative' }}>
-                    <TouristMap lat={userLat || wardData?.latitude} lng={userLng || wardData?.longitude} zones={zones} height={420} />
+                <div className="responsive-map-container" style={{ height: 420, minHeight: 340, position: 'relative' }}>
+                    <TouristMap lat={userLat || wardData?.latitude} lng={userLng || wardData?.longitude} zones={zones} height="100%" />
                 </div>
                 <div style={{ background: C.surfaceAlt, borderTop: `1px solid ${C.border}`, padding: '10px 14px', display: 'flex', gap: 10, overflowX: 'auto', borderRadius: '0 0 20px 20px' }}>
                     {[{ label: 'Safe', color: C.safe }, { label: 'Moderate', color: C.moderate }, { label: 'Restricted', color: C.high }].map(l => (
@@ -375,7 +375,7 @@ export default function ResidentDashboard() {
             </section>
 
             {/* Report FAB */}
-            <Link to="/resident/report" style={{ position: 'fixed', bottom: 80, right: 24, background: 'linear-gradient(135deg, #F87171, #EF4444)', borderRadius: '50%', width: 56, height: 56, display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none', color: '#FFFFFF', zIndex: 30, boxShadow: '0 8px 24px rgba(248,113,113,0.3)' }}>
+            <Link to="/resident/report" style={{ position: 'fixed', bottom: 85, right: 20, background: 'linear-gradient(135deg, #F87171, #EF4444)', borderRadius: '50%', width: 56, height: 56, display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none', color: '#FFFFFF', zIndex: 30, boxShadow: '0 8px 24px rgba(248,113,113,0.3)' }}>
                 <Plus size={24} />
             </Link>
         </div>
