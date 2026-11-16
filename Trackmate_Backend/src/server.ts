@@ -22,7 +22,7 @@ async function bootstrap() {
     app.set('io', io);
 
     // Start the anomaly detection cron
-    startAnomalyDetection();
+    startAnomalyDetection(io);
 
     // Start periodic predictive risk pulse broadcasts
     const stopRiskPulse = startRiskPulseBroadcast(io);

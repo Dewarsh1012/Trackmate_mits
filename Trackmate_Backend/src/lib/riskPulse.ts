@@ -1,5 +1,6 @@
-import { Server as SocketIOServer } from 'socket.io';
 import { Incident, Zone } from '../models';
+import type { Emitter } from './realtime';
+import { geminiJson } from './gemini';
 
 export interface RiskPulseHotspot {
     zone_id: string;
@@ -21,6 +22,9 @@ export interface RiskPulseSnapshot {
     signal_strength: number;
     open_incidents: number;
     hotspots: RiskPulseHotspot[];
+    heuristic_forecast_score?: number;
+    ai_provider?: 'gemini' | 'heuristic';
+    ai_summary?: string;
 }
 
 const DEFAULT_HORIZON_MINUTES = 60;
@@ -145,7 +149,7 @@ export async function buildRiskPulseSnapshot(wardId?: string): Promise<RiskPulse
     const confidence = clamp(roundTo(0.42 + Math.min(sampleSize / 180, 0.52), 3), 0.15, 0.94);
     const signalStrength = clamp(roundTo(Math.min(1, recentSeverityWeight / 30), 3), 0, 1);
 
-    return {
+    const snapshot: RiskPulseSnapshot = {
         generated_at: new Date().toISOString(),
         horizon_minutes: DEFAULT_HORIZON_MINUTES,
         global_risk_score: globalRiskScore,
@@ -155,10 +159,52 @@ export async function buildRiskPulseSnapshot(wardId?: string): Promise<RiskPulse
         signal_strength: signalStrength,
         open_incidents: openIncidents,
         hotspots,
+        heuristic_forecast_score: forecastRiskScore,
+        ai_provider: 'heuristic',
+    };
+
+    return enrichWithGemini(snapshot, wardId);
+}
+
+// Gemini forecast is cached briefly: pulses are polled far more often than risk changes.
+const GEMINI_CACHE_MS = 60_000;
+const geminiCache = new Map<string, { at: number; score: number; summary: string }>();
+
+async function enrichWithGemini(snapshot: RiskPulseSnapshot, wardId?: string): Promise<RiskPulseSnapshot> {
+    if (!process.env.GEMINI_API_KEY) return snapshot;
+
+    const key = wardId || 'all';
+    let cached = geminiCache.get(key);
+    if (!cached || Date.now() - cached.at > GEMINI_CACHE_MS) {
+        const result = await geminiJson<{ forecast_risk_score?: number; summary?: string }>([
+            'You are a predictive risk analyst for a tourist-safety command centre.',
+            'Given the current statistics, estimate the risk score (0-100) for the next hour.',
+            'Reply with JSON only: {"forecast_risk_score": number, "summary": string under 40 words, no markdown}.',
+            '',
+            JSON.stringify({
+                global_risk_score: snapshot.global_risk_score,
+                heuristic_forecast: snapshot.forecast_risk_score,
+                trend: snapshot.trend,
+                open_incidents: snapshot.open_incidents,
+                hour_of_day_utc: new Date().getUTCHours(),
+                hotspots: snapshot.hotspots,
+            }),
+        ].join('\n'));
+        const score = Number(result?.forecast_risk_score);
+        if (!Number.isFinite(score)) return snapshot;
+        cached = { at: Date.now(), score: clamp(Math.round(score), 0, 100), summary: String(result?.summary || '').slice(0, 280) };
+        geminiCache.set(key, cached);
+    }
+
+    return {
+        ...snapshot,
+        forecast_risk_score: Math.round(snapshot.forecast_risk_score * 0.5 + cached.score * 0.5),
+        ai_provider: 'gemini',
+        ai_summary: cached.summary,
     };
 }
 
-export function startRiskPulseBroadcast(io: SocketIOServer): () => void {
+export function startRiskPulseBroadcast(io: Emitter): () => void {
     let stopped = false;
 
     const emitPulse = async () => {

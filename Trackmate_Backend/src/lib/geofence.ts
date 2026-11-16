@@ -100,10 +100,6 @@ export function isPointInZone(lat: number, lon: number, zone: IZone): boolean {
     return dist <= zone.radius_meters;
 }
 
-/**
- * Given a list of active zones, returns the one with the lowest risk level
- * that contains the point. Returns null if no zone matches.
- */
 const RISK_ORDER: Record<string, number> = {
     safe: 0,
     moderate: 1,
@@ -111,6 +107,11 @@ const RISK_ORDER: Record<string, number> = {
     restricted: 3,
 };
 
+/**
+ * Given a list of active zones, returns the MOST restrictive zone that contains the point
+ * (a "safe" zone must never mask an overlapping restricted one). Ties go to the smaller zone.
+ * Returns null if no zone matches.
+ */
 export function findZoneForPoint(
     lat: number,
     lon: number,
@@ -119,8 +120,51 @@ export function findZoneForPoint(
     const matching = zones.filter((z) => z.is_active && isPointInZone(lat, lon, z));
     if (matching.length === 0) return null;
     return matching.sort(
-        (a, b) => RISK_ORDER[a.risk_level] - RISK_ORDER[b.risk_level]
+        (a, b) =>
+            (RISK_ORDER[b.risk_level] ?? 0) - (RISK_ORDER[a.risk_level] ?? 0) ||
+            (a.radius_meters || Infinity) - (b.radius_meters || Infinity)
     )[0];
+}
+
+/** Distance in metres from a point to the nearest point on a segment (local flat-earth approximation). */
+function distanceToSegmentMeters(lat: number, lon: number, a: number[], b: number[]): number {
+    const mPerDegLat = 111_320;
+    const mPerDegLon = 111_320 * Math.cos((lat * Math.PI) / 180);
+    const px = 0;
+    const py = 0;
+    const ax = (a[0] - lon) * mPerDegLon;
+    const ay = (a[1] - lat) * mPerDegLat;
+    const bx = (b[0] - lon) * mPerDegLon;
+    const by = (b[1] - lat) * mPerDegLat;
+    const dx = bx - ax;
+    const dy = by - ay;
+    const lenSq = dx * dx + dy * dy;
+    const t = lenSq === 0 ? 0 : Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq));
+    return Math.hypot(ax + t * dx - px, ay + t * dy - py);
+}
+
+/**
+ * Metres from a point to the edge of a zone: 0 when inside. Handles circular zones and
+ * drawn polygons (the old proximity check treated every zone as a circle around its centre).
+ */
+export function distanceToZoneEdgeMeters(lat: number, lon: number, zone: IZone): number {
+    if (isPointInZone(lat, lon, zone)) return 0;
+    const geometries = getGeoJsonGeometries(zone.geojson);
+    if (geometries.length > 0) {
+        let best = Infinity;
+        for (const geometry of geometries) {
+            const polygons = geometry.type === 'Polygon' ? [geometry.coordinates] : geometry.coordinates;
+            for (const polygon of polygons) {
+                for (const ring of polygon) {
+                    for (let i = 0; i < ring.length - 1; i++) {
+                        best = Math.min(best, distanceToSegmentMeters(lat, lon, ring[i], ring[i + 1]));
+                    }
+                }
+            }
+        }
+        if (Number.isFinite(best)) return best;
+    }
+    return Math.max(0, distanceInMeters(lat, lon, zone.center_lat, zone.center_lng) - (zone.radius_meters || 0));
 }
 
 /**

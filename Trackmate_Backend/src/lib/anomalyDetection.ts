@@ -6,7 +6,14 @@ import {
     combineRuleAndModelScore,
     scoreAnomalyRisk,
 } from './anomalyModel';
-import { generateGeminiAnomalySummary } from './geminiAnomalySummary';
+import type { Emitter } from './realtime';
+import { assessAnomalyWithGemini } from './geminiAnomalySummary';
+import { evaluateTourists, UserMl } from '../ml/runtime';
+import type { BehaviourResult } from '../ml/behaviour';
+
+const GEMINI_WEIGHT = parseClampedNumber(process.env.ANOMALY_GEMINI_WEIGHT, 0.3, 0, 1);
+// How much the personalised behaviour model shifts a rule-triggered alert (trained model only).
+const ML_BEHAVIOUR_WEIGHT = parseClampedNumber(process.env.ANOMALY_ML_WEIGHT, 0.25, 0, 1);
 
 const ANOMALY_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const MODEL_WEIGHT = parseClampedNumber(process.env.ANOMALY_MODEL_WEIGHT, 0.35, 0, 1);
@@ -26,7 +33,7 @@ const TYPE_MIN_SCORES: Record<string, number> = {
     incident_cluster: 0.68,
 };
 
-type ManagedAnomalyType = 'inactivity' | 'unusual_speed' | 'zone_breach' | 'incident_cluster';
+type ManagedAnomalyType = 'inactivity' | 'unusual_speed' | 'zone_breach' | 'incident_cluster' | 'behaviour_anomaly';
 
 interface IncidentPoint {
     latitude?: number;
@@ -48,22 +55,30 @@ interface AnomalyCandidate {
     metrics: AnomalyFeatureMetrics;
     dedupeQuery: Record<string, any>;
     metadata?: Record<string, any>;
+    /** Personalised read of this person's movement (Isolation Forest), when available. */
+    ml?: BehaviourResult;
+    /** Use this as the local score instead of rule + logistic (behaviour-model-detected alerts). */
+    overrideLocalScore?: number;
 }
 
 /**
  * Starts the anomaly detection engine as a recurring setInterval.
  */
-export function startAnomalyDetection(): void {
+let activeEmitter: Emitter | undefined;
+
+export function startAnomalyDetection(io?: Emitter): void {
+    activeEmitter = io;
     console.log('🤖 Anomaly detection engine started (interval: 5 min)');
     setInterval(() => {
-        void runAnomalyChecks();
+        void runAnomalyChecks(io);
     }, ANOMALY_INTERVAL_MS);
 }
 
 /**
  * Runs the anomaly checks and stores incidents when hybrid score thresholds pass.
  */
-export async function runAnomalyChecks(): Promise<{ detected: number; incidents: string[] }> {
+export async function runAnomalyChecks(io?: Emitter): Promise<{ detected: number; incidents: string[] }> {
+    if (io) activeEmitter = io;
     console.log('🔍 Running anomaly detection...');
     const created: string[] = [];
 
@@ -97,6 +112,13 @@ export async function runAnomalyChecks(): Promise<{ detected: number; incidents:
                 { $group: { _id: '$reporter', count: { $sum: 1 } } },
             ]),
         ]);
+
+        // Personalised behaviour + safety read-out for every active tourist (empty if the models can't run).
+        const mlByUser: Map<string, UserMl> = await evaluateTourists({ now }).catch((err) => {
+            console.error('ML evaluation failed:', err);
+            return new Map<string, UserMl>();
+        });
+        const flaggedThisRun = new Set<string>();
 
         const recentIncidents: IncidentPoint[] = recentIncidentsRaw.map((incident: any) => ({
             latitude: toFiniteOrUndefined(incident.latitude),
@@ -153,6 +175,7 @@ export async function runAnomalyChecks(): Promise<{ detected: number; incidents:
                     latitude: latestLat,
                     longitude: latestLng,
                     severity: AlertSeverity.HIGH,
+                    ml: mlByUser.get(userId)?.behaviour,
                     ruleScore: RULE_SCORES.inactivity,
                     minScore: TYPE_MIN_SCORES.inactivity,
                     metrics: {
@@ -177,6 +200,7 @@ export async function runAnomalyChecks(): Promise<{ detected: number; incidents:
 
                 const incident = await createScoredAnomalyIncident(inactivityCandidate);
                 if (incident) {
+                    flaggedThisRun.add(userId);
                     created.push(String(incident._id));
                     userAnomalyCounts.set(userId, userAnomalies24h + 1);
                 }
@@ -191,6 +215,7 @@ export async function runAnomalyChecks(): Promise<{ detected: number; incidents:
                     latitude: latestLat,
                     longitude: latestLng,
                     severity: AlertSeverity.HIGH,
+                    ml: mlByUser.get(userId)?.behaviour,
                     ruleScore: RULE_SCORES.unusual_speed,
                     minScore: TYPE_MIN_SCORES.unusual_speed,
                     metrics: {
@@ -213,6 +238,7 @@ export async function runAnomalyChecks(): Promise<{ detected: number; incidents:
 
                 const incident = await createScoredAnomalyIncident(speedCandidate);
                 if (incident) {
+                    flaggedThisRun.add(userId);
                     created.push(String(incident._id));
                     userAnomalyCounts.set(userId, (userAnomalyCounts.get(userId) ?? 0) + 1);
                 }
@@ -227,6 +253,7 @@ export async function runAnomalyChecks(): Promise<{ detected: number; incidents:
                     latitude: latestLat,
                     longitude: latestLng,
                     severity: AlertSeverity.MEDIUM,
+                    ml: mlByUser.get(userId)?.behaviour,
                     ruleScore: RULE_SCORES.zone_breach,
                     minScore: TYPE_MIN_SCORES.zone_breach,
                     metrics: {
@@ -247,10 +274,56 @@ export async function runAnomalyChecks(): Promise<{ detected: number; incidents:
 
                 const incident = await createScoredAnomalyIncident(breachCandidate);
                 if (incident) {
+                    flaggedThisRun.add(userId);
                     created.push(String(incident._id));
                     userAnomalyCounts.set(userId, (userAnomalyCounts.get(userId) ?? 0) + 1);
                 }
             }
+        }
+
+        // Movement the trained model finds out of character for that person, with no rule alert already raised.
+        // Only the trained model raises these on its own; the untrained prior just explains rule alerts.
+        // Require two consecutive anomalous reads (previous run within 20 min) so one-off GPS blips never page anyone.
+        const previousReads = new Map<string, { anomalous?: boolean; at?: string } | undefined>();
+        if (mlByUser.size) {
+            const rows = await Profile.find({ _id: { $in: [...mlByUser.keys()] } }).select('ml_risk').lean();
+            for (const row of rows as any[]) previousReads.set(String(row._id), row.ml_risk?.behaviour);
+        }
+        for (const [userId, ml] of mlByUser.entries()) {
+            if (flaggedThisRun.has(userId) || !ml.behaviour.anomalous || ml.behaviour.source !== 'trained') continue;
+            const prev = previousReads.get(userId);
+            if (!prev?.anomalous || !prev.at || now - Date.parse(prev.at) > 20 * 60_000) continue;
+            const b = ml.behaviour;
+            const reasons = b.reasons.length ? b.reasons.join('; ') : 'movement pattern differs from this person\'s norm';
+            const candidate: AnomalyCandidate = {
+                reporter: userId,
+                incidentType: 'behaviour_anomaly',
+                title: 'Unusual Behaviour Detected',
+                description: `This tourist's movement is out of character: ${reasons}.`,
+                latitude: ml.latest.lat,
+                longitude: ml.latest.lng,
+                severity: b.score >= 0.75 ? AlertSeverity.HIGH : AlertSeverity.MEDIUM,
+                ruleScore: 0.6,
+                minScore: b.threshold,
+                overrideLocalScore: b.score,
+                ml: b,
+                metrics: {
+                    inactivityMinutes: b.raw.silence_min,
+                    speedKmh: b.raw.speed_kmh,
+                    isOutsideZone: b.raw.zone_risk >= 0.55,
+                    nearbyIncidents15m: 0,
+                    nearbyCriticalIncidents15m: 0,
+                    userAnomalies24h: userAnomalyCounts.get(userId) ?? 0,
+                },
+                dedupeQuery: {
+                    reporter: userId,
+                    incident_type: 'behaviour_anomaly',
+                    status: 'active',
+                    created_at: { $gte: new Date(now - 60 * 60 * 1000) },
+                },
+            };
+            const incident = await createScoredAnomalyIncident(candidate);
+            if (incident) created.push(String(incident._id));
         }
 
         const grid = new Map<string, { count: number; critical: number; latSum: number; lngSum: number }>();
@@ -330,13 +403,44 @@ export async function runAnomalyChecks(): Promise<{ detected: number; incidents:
         }
 
         for (const tourist of tourists) {
-            const activeAnomalies = activeCountMap.get(String(tourist._id)) ?? 0;
+            const id = String(tourist._id);
+            const ml = mlByUser.get(id);
+
+            if (ml) {
+                // Model-driven: move halfway toward the score implied by the predicted 3-hour risk
+                // (smoothed so one noisy reading can't swing it).
+                const target = ml.assessment.score;
+                const newScore = clampScore(tourist.safety_score * 0.5 + target * 0.5);
+                const risk = {
+                    p_incident_3h: ml.assessment.p_incident_3h,
+                    factors: ml.assessment.factors,
+                    model_version: ml.assessment.version,
+                    source: ml.assessment.source,
+                    updated_at: new Date().toISOString(),
+                    behaviour: { score: ml.behaviour.score, anomalous: ml.behaviour.anomalous, at: new Date().toISOString() },
+                };
+                await Profile.findByIdAndUpdate(tourist._id, { $set: { safety_score: newScore, ml_risk: risk } });
+                if (newScore !== tourist.safety_score) {
+                    const top = ml.assessment.factors[0];
+                    activeEmitter?.to(`user_${id}`).emit('safety_score', {
+                        score: newScore,
+                        reason: top && top.effect === 'raises' ? top.label : 'Safety score recalculated',
+                        risk_3h: risk.p_incident_3h,
+                        factors: risk.factors,
+                    });
+                }
+                continue;
+            }
+
+            // No recent movement data: fall back to the alert-based adjustment.
+            const activeAnomalies = activeCountMap.get(id) ?? 0;
             const decrease = Math.min(activeAnomalies * 10, 50);
             const boost = activeAnomalies === 0 ? 2 : 0;
             const newScore = clampScore(tourist.safety_score - decrease + boost);
 
             if (newScore !== tourist.safety_score) {
                 await Profile.findByIdAndUpdate(tourist._id, { $set: { safety_score: newScore } });
+                activeEmitter?.to(`user_${id}`).emit('safety_score', { score: newScore, reason: 'Safety score recalculated' });
             }
         }
 
@@ -353,26 +457,51 @@ async function createScoredAnomalyIncident(candidate: AnomalyCandidate): Promise
     if (exists) return null;
 
     const model = await scoreAnomalyRisk(candidate.metrics);
-    const hybridScore = combineRuleAndModelScore(candidate.ruleScore, model.modelScore, MODEL_WEIGHT);
+    let localScore = candidate.overrideLocalScore ?? combineRuleAndModelScore(candidate.ruleScore, model.modelScore, MODEL_WEIGHT);
+
+    // Personalise rule alerts: the same silence or speed is routine for one person and alarming for another.
+    // Only a trained model shifts the score; the untrained prior just supplies reasons.
+    let mlStrength: number | null = null;
+    if (candidate.ml) {
+        mlStrength = Math.min(1, Math.max(0, (candidate.ml.score - 0.45) / 0.35));
+        if (candidate.ml.source === 'trained' && candidate.overrideLocalScore === undefined) {
+            localScore = (1 - ML_BEHAVIOUR_WEIGHT) * localScore + ML_BEHAVIOUR_WEIGHT * mlStrength;
+        }
+    }
+
+    // Gemini reviews candidates the local scorers are at least borderline on, and
+    // its verdict is blended into the final score (falls back to local if unavailable).
     const minRequired = Math.max(GLOBAL_MIN_SCORE, candidate.minScore);
+    let hybridScore = localScore;
+    let summary: string | null = null;
+    let geminiScore: number | null = null;
+    if (process.env.GEMINI_API_KEY && localScore >= minRequired - 0.15) {
+        const assessment = await assessAnomalyWithGemini({
+            incidentType: candidate.incidentType,
+            severity: candidate.severity,
+            title: candidate.title,
+            description: candidate.description,
+            ruleScore: candidate.ruleScore,
+            modelScore: model.modelScore,
+            hybridScore: localScore,
+            metrics: candidate.metrics,
+        });
+        summary = assessment.summary;
+        geminiScore = assessment.score;
+        if (geminiScore !== null) {
+            hybridScore = (1 - GEMINI_WEIGHT) * localScore + GEMINI_WEIGHT * geminiScore;
+        }
+    }
     if (hybridScore < minRequired) {
         return null;
     }
 
-    const summary = await generateGeminiAnomalySummary({
-        incidentType: candidate.incidentType,
-        severity: candidate.severity,
-        title: candidate.title,
-        description: candidate.description,
-        ruleScore: candidate.ruleScore,
-        modelScore: model.modelScore,
-        hybridScore,
-        metrics: candidate.metrics,
-    });
-
-    const descriptionWithSummary = summary
-        ? `${candidate.description}\n\nAI Triage: ${summary}`
-        : candidate.description;
+    const behaviourNote = candidate.ml && candidate.ml.reasons.length && candidate.incidentType !== 'behaviour_anomaly'
+        ? `\n\nBehaviour model: ${candidate.ml.reasons.join('; ')}.`
+        : '';
+    const descriptionWithSummary = (summary
+        ? `${candidate.description}${behaviourNote}\n\nAI Triage: ${summary}`
+        : `${candidate.description}${behaviourNote}`);
 
     const incident = await Incident.create({
         reporter: candidate.reporter,
@@ -388,15 +517,26 @@ async function createScoredAnomalyIncident(candidate: AnomalyCandidate): Promise
             anomaly_type: candidate.incidentType,
             rule_score: roundTo(candidate.ruleScore, 4),
             model_score: roundTo(model.modelScore, 4),
+            local_score: roundTo(localScore, 4),
+            gemini_score: geminiScore === null ? null : roundTo(geminiScore, 4),
             hybrid_score: roundTo(hybridScore, 4),
             min_required_score: roundTo(minRequired, 4),
             model_version: model.modelVersion,
             normalized_features: model.normalizedFeatures.map((v) => roundTo(v, 4)),
+            ml_anomaly: candidate.ml
+                ? { score: candidate.ml.score, strength: mlStrength === null ? null : roundTo(mlStrength, 4), threshold: candidate.ml.threshold, source: candidate.ml.source, version: candidate.ml.version, reasons: candidate.ml.reasons }
+                : null,
             summary_provider: summary ? 'gemini' : 'none',
             triage_summary: summary,
             detected_at: new Date().toISOString(),
         },
     });
+
+    if (activeEmitter) {
+        const payload = incident.toObject ? incident.toObject() : incident;
+        activeEmitter.to('authority_room').emit('incident:new', payload);
+        activeEmitter.to('authority_room').emit('new-incident', payload);
+    }
 
     return incident;
 }

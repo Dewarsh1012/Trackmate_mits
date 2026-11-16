@@ -22,6 +22,11 @@ import verifyRoutes from './routes/verify.routes';
 import alertRoutes from './routes/alert.routes';
 import reportRoutes from './routes/report.routes';
 import uploadRoutes from './routes/upload.routes';
+import realtimeRoutes from './routes/realtime.routes';
+import healthRoutes from './routes/health.routes';
+import hooterRoutes from './routes/hooter.routes';
+import walletRoutes from './routes/wallet.routes';
+import mlRoutes from './routes/ml.routes';
 import { errorHandler } from './middleware/errorHandler';
 import { apiRateLimiter } from './middleware/rateLimiter';
 import { sanitizeInput } from './middleware/sanitize';
@@ -72,7 +77,7 @@ app.use(sanitizeInput);
 
 // ─── Static uploads ──────────────────────────────────────────────────
 
-app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+app.use('/uploads', express.static(process.env.VERCEL ? '/tmp/uploads' : path.join(process.cwd(), 'uploads')));
 
 // ─── Health Check ────────────────────────────────────────────────────
 
@@ -102,6 +107,14 @@ apiV1.use('/verify', verifyRoutes);
 apiV1.use('/alerts', alertRoutes);
 apiV1.use('/reports', reportRoutes);
 apiV1.use('/uploads', uploadRoutes);
+apiV1.use('/health', healthRoutes);
+apiV1.use('/hooter', hooterRoutes);
+apiV1.use('/wallet', walletRoutes);
+apiV1.use('/ml', mlRoutes);
+
+// Realtime polling is high-frequency by design, so it sits outside the API rate limiter.
+app.use('/api/v1/realtime', realtimeRoutes);
+app.use('/api/realtime', realtimeRoutes);
 
 app.use('/api/v1', apiRateLimiter, apiV1);
 

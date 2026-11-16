@@ -56,6 +56,18 @@ export const errorHandler = (
         return;
     }
 
+    // Malformed ObjectId in a path/query (e.g. /incidents/not-an-id)
+    if (err instanceof MongooseError.CastError) {
+        res.status(400).json({ success: false, message: `Invalid ${err.path || 'id'}` });
+        return;
+    }
+
+    // Rejected by the CORS origin check
+    if (/^CORS policy/.test(err.message)) {
+        res.status(403).json({ success: false, message: err.message });
+        return;
+    }
+
     // Generic
     const statusCode = err.statusCode || 500;
     const message = statusCode === 500 ? 'Internal server error' : err.message;

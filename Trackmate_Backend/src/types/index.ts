@@ -96,6 +96,8 @@ export enum BusinessCategory {
 // ── Document Interfaces ──
 export interface IProfile extends Document {
     _id: Types.ObjectId;
+    health_key_hash?: string;
+    wallet_address?: string;
     email: string;
     password: string;
     role: UserRole;
@@ -107,6 +109,7 @@ export interface IProfile extends Document {
     id_number_hash?: string;
     id_last_four?: string;
     safety_score: number;
+    ml_risk?: { p_incident_3h: number; factors: Array<{ label: string; effect: 'raises' | 'lowers'; weight: number }>; model_version: string; source: 'prior' | 'trained'; updated_at: string; behaviour?: { score: number; anomalous: boolean; at: string } };
     preferred_language: string;
     ward?: Types.ObjectId;
     is_verified: boolean;

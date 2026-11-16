@@ -26,7 +26,7 @@ const baseRegisterSchema = z.object({
     phone: z.string().optional(),
     role: z.nativeEnum(UserRole),
     preferred_language: z.string().optional(),
-    wallet_address: z.string().optional(),
+    wallet_address: z.string().regex(/^0x[a-fA-F0-9]{40}$/, 'Invalid wallet address').optional(),
 });
 
 const touristExtras = z.object({
@@ -142,7 +142,9 @@ router.post('/register', authRateLimiter, async (req, res: Response, next) => {
         await profile.save();
 
         // Generate blockchain ID
-        const blockchain_id = base.wallet_address || generateBlockchainId({
+        // The ID is always derived from the account data. A connected wallet is stored separately,
+        // instead of replacing the ID with the wallet address.
+        const blockchain_id = generateBlockchainId({
             userId: profile._id.toString(),
             role: base.role,
             idHash,
@@ -151,6 +153,7 @@ router.post('/register', authRateLimiter, async (req, res: Response, next) => {
         });
 
         profile.blockchain_id = blockchain_id;
+        if (base.wallet_address) profile.wallet_address = base.wallet_address.toLowerCase();
         await profile.save();
 
         // Tourist: create initial trip

@@ -11,3 +11,8 @@ export { EFIR } from './EFIR';
 export { PlatformConfig } from './PlatformConfig';
 export { Alert } from './Alert';
 export { UserAlert } from './UserAlert';
+export { RealtimeEvent, Presence } from './RealtimeEvent';
+export { HealthSample } from './HealthSample';
+export { DeviceLink } from './DeviceLink';
+export { WalletAttestation } from './WalletAttestation';
+export { MlModel } from './MlModel';

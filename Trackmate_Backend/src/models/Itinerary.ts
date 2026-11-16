@@ -9,8 +9,17 @@ const itinerarySchema = new Schema<IItinerary>(
     },
     {
         timestamps: { createdAt: 'created_at', updatedAt: false },
+        toJSON: { virtuals: true },
+        toObject: { virtuals: true },
     }
 );
+
+// The trip routes populate `stops`; without this virtual that query throws and the whole Trip page errors.
+itinerarySchema.virtual('stops', {
+    ref: 'ItineraryStop',
+    localField: '_id',
+    foreignField: 'itinerary',
+});
 
 const itineraryStopSchema = new Schema<IItineraryStop>(
     {

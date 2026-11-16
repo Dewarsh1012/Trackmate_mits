@@ -1,12 +1,13 @@
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import crypto from 'crypto';
+import bcrypt from 'bcryptjs';
 dotenv.config();
 
 import { connectDatabase, disconnectDatabase } from '../config/database';
 import {
     Profile, Ward, Zone, Trip, Itinerary, Business,
-    EmergencyContact, Incident, EFIR, PlatformConfig
+    EmergencyContact, Incident, EFIR, PlatformConfig, LocationLog, Alert
 } from '../models';
 import { generateBlockchainId, hashGovernmentId, generateEFIRHash } from '../lib/blockchain';
 
@@ -30,6 +31,7 @@ import { generateBlockchainId, hashGovernmentId, generateEFIRHash } from '../lib
 // Business HotelNam:   hotel@business.com / Business2026!
 // Business TourGuide:  guide@business.com / Business2026!
 // Business MedClinic:  clinic@business.com / Business2026!
+// Admin:               admin@safetravel.gov / Admin2026!
 // ─────────────────────────────────────────────────────────────────────
 
 const SALT = process.env.BLOCKCHAIN_SALT!;
@@ -37,8 +39,11 @@ const AUTH_PASS = 'SafeAuth2026!';
 const TOURIST_PASS = 'Tourist2026!';
 const RESIDENT_PASS = 'Resident2026!';
 const BUSINESS_PASS = 'Business2026!';
+const ADMIN_PASS = 'Admin2026!';
 
 async function upsertProfile(data: any, email: string) {
+    // findOneAndUpdate bypasses the model's pre-save hook, so hash the password here.
+    if (data.password) data = { ...data, password: await bcrypt.hash(data.password, 10) };
     return Profile.findOneAndUpdate({ email }, data, {
         upsert: true, new: true, runValidators: false,
     });
@@ -112,14 +117,14 @@ async function seed() {
         { email: 'yuki@tourist.com', full_name: 'Yuki Nakamura', id_number: 'JP99112233', id_type: 'passport', zone: zones[2], ward: wards[0] },
     ];
 
-    const touristDocs = [];
+    const touristDocs: any[] = [];
     for (const td of touristData) {
         const idHashed = hashGovernmentId(td.id_number);
         const p = await upsertProfile({
             email: td.email, password: TOURIST_PASS, role: 'tourist',
             full_name: td.full_name, id_type: td.id_type,
             id_number_hash: idHashed.hash, id_last_four: idHashed.lastFour,
-            is_active: true, safety_score: 85 + Math.floor(Math.random() * 15),
+            ward: td.ward._id, is_active: true, is_verified: true, safety_score: 85 + Math.floor(Math.random() * 15),
         }, td.email);
         const bcId = generateBlockchainId({ userId: String(p._id), role: 'tourist', idHash: idHashed.hash, issuedAt: p.created_at.toISOString(), salt: SALT });
         await Profile.findByIdAndUpdate(p._id, { blockchain_id: bcId });
@@ -252,6 +257,63 @@ async function seed() {
         }
     } else {
         console.log(`  ⏭ EFIR already seeded`);
+    }
+
+    // ── Admin ────────────────────────────────────────────────────────
+    const admin = await upsertProfile({
+        email: 'admin@safetravel.gov', password: ADMIN_PASS, role: 'admin',
+        full_name: 'Platform Admin', designation: 'Administrator', department: 'Platform',
+        is_verified: true, is_active: true,
+    }, 'admin@safetravel.gov');
+    await Profile.findByIdAndUpdate(admin._id, {
+        blockchain_id: generateBlockchainId({ userId: String(admin._id), role: 'admin', idHash: 'admin@safetravel.gov', issuedAt: admin.created_at.toISOString(), salt: SALT }),
+    });
+    console.log('  ✓ 1 admin account');
+
+    // ── Recent location history (so live maps / anomaly checks have data) ──
+    const homeByEmail: Record<string, any> = {};
+    touristData.forEach((t, i) => { homeByEmail[String(touristDocs[i]._id)] = t.zone; });
+    await LocationLog.deleteMany({ user: { $in: touristDocs.map((t) => t._id) } });
+    const logs: any[] = [];
+    for (const t of touristDocs) {
+        const z = homeByEmail[String(t._id)];
+        for (let i = 0; i < 6; i++) {
+            logs.push({
+                user: t._id,
+                latitude: z.center_lat + (Math.random() - 0.5) * 0.004,
+                longitude: z.center_lng + (Math.random() - 0.5) * 0.004,
+                accuracy_meters: 12, speed: 1.2, battery_level: 40 + Math.floor(Math.random() * 55),
+                is_in_safe_zone: z.risk_level === 'safe', current_zone: z._id, source: 'gps',
+                recorded_at: new Date(Date.now() - i * 4 * 60 * 1000),
+            });
+        }
+    }
+    // A week of movement across the circuit, so the analytics heatmaps have something to show.
+    for (const t of touristDocs) {
+        for (let day = 1; day <= 6; day++) {
+            const stop = zones[(day + touristDocs.indexOf(t)) % zones.length];
+            for (let i = 0; i < 6; i++) {
+                logs.push({
+                    user: t._id,
+                    latitude: stop.center_lat + (Math.random() - 0.5) * 0.01,
+                    longitude: stop.center_lng + (Math.random() - 0.5) * 0.01,
+                    accuracy_meters: 15, speed: 1, battery_level: 30 + Math.floor(Math.random() * 60),
+                    is_in_safe_zone: stop.risk_level === 'safe', current_zone: stop._id, source: 'gps',
+                    recorded_at: new Date(Date.now() - day * 24 * 3600 * 1000 - i * 20 * 60 * 1000),
+                });
+            }
+        }
+    }
+    await LocationLog.insertMany(logs);
+    console.log(`  ✓ ${logs.length} location logs`);
+
+    // ── Broadcast alerts ─────────────────────────────────────────────
+    if ((await Alert.countDocuments()) === 0) {
+        await Alert.insertMany([
+            { created_by: authorityDocs[0]._id, title: 'Heavy snowfall expected at Sela Pass', message: 'Road closure possible after 18:00. Plan your descent early and carry warm clothing.', alert_type: 'weather', priority: 'high', target_group: 'all', sent_at: new Date() },
+            { created_by: authorityDocs[0]._id, title: 'Inner Line Permit checks', message: 'Permit checks are active near the Bumla border zone. Carry valid documents.', alert_type: 'general', priority: 'medium', target_group: 'tourists', sent_at: new Date() },
+        ]);
+        console.log('  ✓ 2 alerts');
     }
 
     // ── Emergency Contacts ───────────────────────────────────────────

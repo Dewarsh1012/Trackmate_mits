@@ -3,7 +3,8 @@ import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
 
-const UPLOAD_DIR = path.join(process.cwd(), 'uploads');
+// Vercel's filesystem is read-only except /tmp (ephemeral)
+const UPLOAD_DIR = process.env.VERCEL ? '/tmp/uploads' : path.join(process.cwd(), 'uploads');
 const EVIDENCE_DIR = path.join(UPLOAD_DIR, 'evidence');
 const FILES_DIR = path.join(UPLOAD_DIR, 'files');
 

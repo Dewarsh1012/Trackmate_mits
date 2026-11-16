@@ -240,7 +240,13 @@ router.patch('/my/:alertId/acknowledge', authenticate, async (req: AuthRequest, 
         const deliveredAt = userAlert.delivered_at?.getTime() || 0;
         const ackTime = Date.now() - deliveredAt;
         if (ackTime < 2 * 60 * 1000) {
-            await Profile.findByIdAndUpdate(req.user!.userId, { $inc: { safety_score: 2 } });
+            const updated = await Profile.findByIdAndUpdate(
+                req.user!.userId,
+                [{ $set: { safety_score: { $min: [100, { $add: ['$safety_score', 2] }] } } }],
+                { new: true }
+            ).select('safety_score').lean();
+            const io = (req as any).app.get('io');
+            if (updated && io) io.to(`user_${req.user!.userId}`).emit('safety_score', { score: (updated as any).safety_score, reason: 'Alert acknowledged quickly' });
         }
 
         res.json({ success: true, data: userAlert });

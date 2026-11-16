@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import express, { Router, Response } from 'express';
 import { z } from 'zod';
 import { authenticate, requireRole } from '../middleware/auth';
@@ -14,7 +15,10 @@ import {
 import { uploadEvidence, toPublicUploadPath } from '../middleware/upload';
 import { calculateSpeed, distanceInMeters, findZoneForPoint } from '../lib/geofence';
 import { combineRuleAndModelScore, scoreAnomalyRisk } from '../lib/anomalyModel';
+import { runAfterResponse } from '../lib/realtime';
+import { geminiJson } from '../lib/gemini';
 import { sendSosSmsNotifications } from '../lib/sosSmsNotifier';
+import { buildSosTriage } from '../ml/runtime';
 
 const router: Router = express.Router();
 
@@ -102,16 +106,10 @@ router.get('/', authenticate, async (req: AuthRequest, res: Response, next) => {
     try {
         const {
             status, severity, source, zone, ward, is_public,
-            incident_type, page = '1', limit = '20', reporter,
+            incident_type, page = '1', limit = '20', reporter, sos,
         } = req.query;
 
         const filter: Record<string, any> = {};
-
-        if (req.user!.role === UserRole.RESIDENT) {
-            filter.is_public = true;
-        } else if (req.user!.role === UserRole.TOURIST) {
-            filter.reporter = req.user!.userId;
-        }
 
         if (status) filter.status = status;
         if (severity) filter.severity = severity;
@@ -121,8 +119,20 @@ router.get('/', authenticate, async (req: AuthRequest, res: Response, next) => {
         if (is_public !== undefined) filter.is_public = is_public === 'true';
         if (incident_type) filter.incident_type = incident_type;
         if (reporter) filter.reporter = reporter;
+        // sos=true: every SOS, however it was raised (one request instead of two overlapping ones).
+        if (sos === 'true') filter.$or = [{ incident_type: 'sos_emergency' }, { source: 'sos_panic' }];
 
-        const skip = (parseInt(String(page), 10) - 1) * parseInt(String(limit), 10);
+        // Role restrictions are applied last so query parameters can't widen them.
+        const role = req.user!.role;
+        if (role === UserRole.TOURIST) {
+            filter.reporter = req.user!.userId;
+        } else if (role !== UserRole.AUTHORITY && role !== UserRole.ADMIN) {
+            filter.$and = [{ $or: [{ is_public: true }, { reporter: req.user!.userId }] }];
+        }
+
+        const pageNum = Math.max(1, parseInt(String(page), 10) || 1);
+        const limitNum = Math.min(200, Math.max(1, parseInt(String(limit), 10) || 20));
+        const skip = (pageNum - 1) * limitNum;
 
         const [data, total] = await Promise.all([
             Incident.find(filter)
@@ -132,7 +142,7 @@ router.get('/', authenticate, async (req: AuthRequest, res: Response, next) => {
                 .populate('assigned_to', 'full_name designation role')
                 .sort({ created_at: -1, severity: -1 })
                 .skip(skip)
-                .limit(parseInt(String(limit), 10))
+                .limit(limitNum)
                 .lean(),
             Incident.countDocuments(filter),
         ]);
@@ -142,8 +152,8 @@ router.get('/', authenticate, async (req: AuthRequest, res: Response, next) => {
             data,
             meta: {
                 total,
-                page: parseInt(String(page), 10),
-                limit: parseInt(String(limit), 10),
+                page: pageNum,
+                limit: limitNum,
             },
         });
     } catch (err) {
@@ -163,6 +173,10 @@ router.get('/:id', authenticate, async (req: AuthRequest, res: Response, next) =
             .lean();
         if (!incident) {
             res.status(404).json({ success: false, message: 'Incident not found' });
+            return;
+        }
+        if (!canViewIncident(req.user!, incident)) {
+            res.status(403).json({ success: false, message: 'Forbidden' });
             return;
         }
         res.json({ success: true, data: incident });
@@ -252,6 +266,9 @@ router.post(
 // ─── POST create incident ─────────────────────────────────────────────
 
 router.post('/', authenticate, async (req: AuthRequest, res: Response, next) => {
+    const t0 = Date.now();
+    const marks: string[] = [];
+    const mark = (name: string) => marks.push(`${name};dur=${Date.now() - t0}`);
     try {
         const body = createIncidentSchema.parse(req.body);
         const rawLocation = (req.body as Record<string, any>)?.location;
@@ -277,6 +294,18 @@ router.post('/', authenticate, async (req: AuthRequest, res: Response, next) => 
         let resolvedIncidentLatitude = incidentLatitude;
         let resolvedIncidentLongitude = incidentLongitude;
 
+        // Offline retries carry an idempotency key: a repeat of an already-stored SOS returns the original.
+        const clientRequestId = typeof body.metadata?.client_request_id === 'string' ? body.metadata.client_request_id.slice(0, 80) : null;
+        if (isSosIncident && reporterId && clientRequestId) {
+            const existing = await Incident.findOne({ reporter: reporterId, 'metadata.client_request_id': clientRequestId })
+                .populate('reporter', 'full_name role blockchain_id phone')
+                .lean();
+            if (existing) {
+                res.status(200).json({ success: true, data: existing, duplicate: true });
+                return;
+            }
+        }
+
         const timelineEvents: CrisisTimelineEvent[] = [
             createTimelineEvent({
                 type: isSosIncident ? 'sos_received' : 'incident_created',
@@ -292,96 +321,10 @@ router.post('/', authenticate, async (req: AuthRequest, res: Response, next) => 
         ];
 
         let metadata: Record<string, any> = body.metadata ? { ...body.metadata } : {};
-        let assignedToId: string | undefined;
-        let responderCandidates: ResponderCandidate[] = [];
-        let misuseShieldMetadata: MisuseShieldMetadata | null = null;
-
-        if (isSosIncident && reporterId) {
-            const [sosRiskMetadata, misuseMetadata] = await Promise.all([
-                buildSosRiskMetadata({
-                    reporterId,
-                    latitude: incidentLatitude,
-                    longitude: incidentLongitude,
-                }),
-                buildMisuseShieldMetadata({ reporterId }),
-            ]);
-
-            misuseShieldMetadata = misuseMetadata;
-
-            const fallbackLatitude = toFiniteOrUndefined(sosRiskMetadata.sos_risk_metrics?.latitude);
-            const fallbackLongitude = toFiniteOrUndefined(sosRiskMetadata.sos_risk_metrics?.longitude);
-            if (resolvedIncidentLatitude == null && fallbackLatitude != null) {
-                resolvedIncidentLatitude = fallbackLatitude;
-            }
-            if (resolvedIncidentLongitude == null && fallbackLongitude != null) {
-                resolvedIncidentLongitude = fallbackLongitude;
-            }
-
-            const responderPlan = await selectAutoResponders({
-                latitude: resolvedIncidentLatitude,
-                longitude: resolvedIncidentLongitude,
-                wardId: body.ward,
-                excludeUserId: reporterId,
-            });
-
-            responderCandidates = responderPlan.responders;
-            if (responderPlan.primary) {
-                assignedToId = responderPlan.primary.user_id;
-            }
-
-            metadata = {
-                ...metadata,
-                ...sosRiskMetadata,
-                ...misuseMetadata,
-                triggered_by_role: req.user!.role,
-                sos_auto_assignment: {
-                    generated_at: new Date().toISOString(),
-                    primary_responder: responderPlan.primary || null,
-                    responders: responderPlan.responders,
-                },
-            };
-
-            timelineEvents.push(
-                createTimelineEvent({
-                    type: 'sos_risk_scored',
-                    label: 'SOS risk scored',
-                    actorRole: 'model',
-                    details: {
-                        real_danger_probability: sosRiskMetadata.sos_risk_real_danger_probability,
-                        false_alarm_probability: sosRiskMetadata.sos_risk_false_alarm_probability,
-                        confidence_band: sosRiskMetadata.sos_risk_confidence_band,
-                    },
-                })
-            );
-
-            if (misuseMetadata.sos_misuse_flagged) {
-                timelineEvents.push(
-                    createTimelineEvent({
-                        type: 'misuse_shield_flagged',
-                        label: 'Incident flagged by misuse shield',
-                        actorRole: 'misuse-shield',
-                        details: {
-                            misuse_risk_score: misuseMetadata.sos_misuse_risk_score,
-                            misuse_risk_band: misuseMetadata.sos_misuse_risk_band,
-                        },
-                    })
-                );
-            }
-
-            if (responderPlan.primary) {
-                timelineEvents.push(
-                    createTimelineEvent({
-                        type: 'responder_auto_assigned',
-                        label: 'Responder auto-assigned',
-                        actorRole: 'dispatcher',
-                        details: {
-                            primary_responder: responderPlan.primary,
-                            backup_responders: responderPlan.responders.slice(1),
-                        },
-                    })
-                );
-            }
-        }
+        // Fetched in parallel with the insert so the alert can carry the reporter's name without waiting on populate().
+        const reporterPromise = reporterId
+            ? Profile.findById(reporterId).select('full_name role blockchain_id phone').lean()
+            : Promise.resolve(null);
 
         const incident = await Incident.create({
             ...body,
@@ -393,166 +336,247 @@ router.post('/', authenticate, async (req: AuthRequest, res: Response, next) => 
                 ...metadata,
                 crisis_timeline: timelineEvents,
             },
-            assigned_to: assignedToId,
             reporter: reporterId,
         });
 
+        mark('create');
         const io = (req as any).app.get('io');
 
-        let guardianDispatchTimelineEvent: CrisisTimelineEvent | null = null;
-        let guardianDispatchSummary: Record<string, any> | null = null;
+        // Used for the realtime alerts: ready the instant the insert returns.
+        const reporterDoc = await reporterPromise;
+        const finalIncident: any = { ...incident.toObject(), reporter: reporterDoc ?? incident.toObject().reporter };
 
-        if (isSosIncident && reporterId && io) {
-            const guardianDispatch = await dispatchGuardianNetwork({
-                io,
-                incidentId: String(incident._id),
-                incidentTitle: body.title,
-                reporterId,
-                latitude: resolvedIncidentLatitude,
-                longitude: resolvedIncidentLongitude,
-            });
-
-            if (guardianDispatch) {
-                guardianDispatchTimelineEvent = guardianDispatch.timelineEvent;
-                guardianDispatchSummary = guardianDispatch.summary;
-
-                await Incident.findByIdAndUpdate(incident._id, {
-                    $set: { 'metadata.sos_guardian_dispatch': guardianDispatch.summary },
-                    $push: { 'metadata.crisis_timeline': guardianDispatch.timelineEvent },
-                });
-            }
-        }
-
-        const finalIncident = await Incident.findById(incident._id)
-            .populate('reporter', 'full_name role blockchain_id phone')
-            .populate('zone', 'name risk_level')
-            .populate('ward', 'name district')
-            .populate('assigned_to', 'full_name designation role')
-            .lean();
-
-        if (!finalIncident) {
-            res.status(500).json({ success: false, message: 'Unable to fetch created incident' });
-            return;
-        }
-
-        let sosSmsDispatchSummary: Record<string, any> | null = null;
-        if (isSosIncident) {
-            const reporter = (finalIncident as any).reporter;
-            const reporterName = String(
-                reporter?.full_name ||
-                (finalIncident as any).metadata?.triggered_by_name ||
-                'Unknown User'
-            );
-            const reporterRole = String(reporter?.role || req.user!.role || 'user');
-            const reporterPhone = reporter?.phone ? String(reporter.phone) : undefined;
-
-            const authorityRecipients = await Profile.find({
-                role: { $in: [UserRole.AUTHORITY, UserRole.ADMIN] },
-                is_active: true,
-                phone: { $exists: true, $ne: '' },
-            })
-                .select('_id full_name phone')
-                .lean();
-
-            const fallbackLatitude = toFiniteOrUndefined((finalIncident as any).metadata?.sos_risk_metrics?.latitude);
-            const fallbackLongitude = toFiniteOrUndefined((finalIncident as any).metadata?.sos_risk_metrics?.longitude);
-
-            const smsTrialOnlyVerified = process.env.SOS_SMS_TRIAL_ONLY_VERIFIED === 'true';
-            const smsRecipients = smsTrialOnlyVerified
-                ? []
-                : authorityRecipients.map((authority: any) => ({
-                    user_id: String(authority._id),
-                    full_name: String(authority.full_name || 'Authority Officer'),
-                    phone: String(authority.phone || ''),
-                }));
-
-            const smsSummary = await sendSosSmsNotifications(
-                {
-                    incidentId: String(finalIncident._id),
-                    reporterName,
-                    reporterRole,
-                    reporterPhone,
-                    latitude: toFiniteOrUndefined((finalIncident as any).latitude) ?? fallbackLatitude,
-                    longitude: toFiniteOrUndefined((finalIncident as any).longitude) ?? fallbackLongitude,
-                    triggeredAt: new Date((finalIncident as any).created_at || Date.now()),
-                },
-                smsRecipients
-            );
-
-            sosSmsDispatchSummary = smsSummary;
-
-            await Incident.findByIdAndUpdate(finalIncident._id, {
-                $set: { 'metadata.sos_sms_dispatch': smsSummary },
-            });
-
-            (finalIncident as any).metadata = {
-                ...((finalIncident as any).metadata || {}),
-                sos_sms_dispatch: smsSummary,
-            };
-        }
-
+        // Alert authorities first: nothing slower than the DB write sits between an SOS and the command centre.
         if (io) {
             io.to('authority_room').emit('incident:new', finalIncident);
             io.to('authority_room').emit('new-incident', finalIncident);
-            io.to('role_tourist').to('role_resident').to('role_business').emit('new-incident', finalIncident);
+            // Private incidents (e.g. SOS) go to authorities only; the public feed gets public ones.
+            if ((finalIncident as any)?.is_public) {
+                io.to('role_tourist').to('role_resident').to('role_business').emit('new-incident', finalIncident);
+            }
 
             if (isSosIncident) {
                 const incidentId = String(finalIncident._id);
                 io.to('authority_room').to(`incident_${incidentId}`).emit('sos:triggered', finalIncident);
 
-                const timelinePayloadEvents = guardianDispatchTimelineEvent
-                    ? [...timelineEvents, guardianDispatchTimelineEvent]
-                    : [...timelineEvents];
-
-                if (timelinePayloadEvents.length > 0) {
-                    const timelinePayload = {
-                        incident_id: incidentId,
-                        events: timelinePayloadEvents,
-                        latest: timelinePayloadEvents[timelinePayloadEvents.length - 1],
-                    };
-                    io.to('authority_room').to(`incident_${incidentId}`).emit('crisis:timeline', timelinePayload);
-                    if (reporterId) io.to(`user_${reporterId}`).emit('crisis:timeline', timelinePayload);
-                }
-
-                if (reporterId && responderCandidates.length > 0) {
-                    const assignmentPayload = {
-                        incident_id: incidentId,
-                        responders: responderCandidates,
-                        primary_responder: responderCandidates[0],
-                    };
-                    io.to('authority_room').emit('responder:auto-assigned', assignmentPayload);
-                    io.to(`user_${reporterId}`).emit('sos:assignment', assignmentPayload);
-                    for (const responder of responderCandidates) {
-                        io.to(`user_${responder.user_id}`).emit('responder:auto-assigned', assignmentPayload);
-                    }
-                }
-
-                if (guardianDispatchSummary) {
-                    io.to('authority_room').emit('guardian:dispatch-summary', {
-                        incident_id: incidentId,
-                        ...guardianDispatchSummary,
-                    });
-                }
-
-                if (misuseShieldMetadata?.sos_misuse_flagged) {
-                    io.to('authority_room').emit('sos:misuse-flagged', {
-                        incident_id: incidentId,
-                        reporter_id: reporterId,
-                        misuse_risk_score: misuseShieldMetadata.sos_misuse_risk_score,
-                        misuse_risk_band: misuseShieldMetadata.sos_misuse_risk_band,
-                    });
-                }
-
-                if (sosSmsDispatchSummary) {
-                    io.to('authority_room').emit('sos:sms-dispatch', {
-                        incident_id: incidentId,
-                        dispatch: sosSmsDispatchSummary,
-                    });
-                }
+                const timelinePayload = {
+                    incident_id: incidentId,
+                    events: [...timelineEvents],
+                    latest: timelineEvents[timelineEvents.length - 1],
+                };
+                io.to('authority_room').to(`incident_${incidentId}`).emit('crisis:timeline', timelinePayload);
+                if (reporterId) io.to(`user_${reporterId}`).emit('crisis:timeline', timelinePayload);
             }
         }
 
-        res.status(201).json({ success: true, data: finalIncident });
+        // The HTTP response also carries zone/ward/assignee details (the alerts above already went out).
+        await incident.populate([
+            { path: 'zone', select: 'name risk_level' },
+            { path: 'ward', select: 'name district' },
+            { path: 'assigned_to', select: 'full_name designation role' },
+        ]);
+        const responseIncident = { ...incident.toObject(), reporter: reporterDoc ?? incident.toObject().reporter };
+
+        mark('fetch');
+        res.setHeader('Server-Timing', marks.join(', '));
+        res.status(201).json({ success: true, data: responseIncident });
+
+        // Guardian-network dispatch and SMS are slow (extra queries, third-party calls), so they run
+        // in parallel after the response. runAfterResponse keeps a serverless function alive for them.
+        if (isSosIncident && reporterId) {
+            const incidentId = String(finalIncident._id);
+
+            // Risk scoring, misuse shield and responder assignment: valuable, but not worth delaying the alert.
+            const enrichTask = (async () => {
+                const [sosRiskMetadata, misuseMetadata] = await Promise.all([
+                    buildSosRiskMetadata({ reporterId, latitude: incidentLatitude, longitude: incidentLongitude }),
+                    buildMisuseShieldMetadata({ reporterId, excludeId: String(incident._id) }),
+                ]);
+
+                const fallbackLatitude = toFiniteOrUndefined(sosRiskMetadata.sos_risk_metrics?.latitude);
+                const fallbackLongitude = toFiniteOrUndefined(sosRiskMetadata.sos_risk_metrics?.longitude);
+                if (resolvedIncidentLatitude == null && fallbackLatitude != null) resolvedIncidentLatitude = fallbackLatitude;
+                if (resolvedIncidentLongitude == null && fallbackLongitude != null) resolvedIncidentLongitude = fallbackLongitude;
+
+                // Responder search and the ML triage are independent: run them together.
+                const [responderPlan, triage] = await Promise.all([
+                    selectAutoResponders({
+                        latitude: resolvedIncidentLatitude,
+                        longitude: resolvedIncidentLongitude,
+                        wardId: body.ward,
+                        excludeUserId: reporterId,
+                    }),
+                    buildSosTriage({
+                        reporterId,
+                        text: body.description || '', // the title is boilerplate ("Emergency SOS"), so only the person's own words count
+                        latitude: resolvedIncidentLatitude,
+                        longitude: resolvedIncidentLongitude,
+                        metrics: sosRiskMetadata.sos_risk_metrics,
+                        misuse: misuseMetadata.sos_misuse_signals,
+                        geminiScore: sosRiskMetadata.sos_risk_gemini_score,
+                    }).catch((err) => { console.error('SOS triage failed:', err); return null; }),
+                ]);
+
+                const extraEvents: CrisisTimelineEvent[] = [
+                    createTimelineEvent({
+                        type: 'sos_risk_scored',
+                        label: 'SOS risk scored',
+                        actorRole: 'model',
+                        details: {
+                            real_danger_probability: sosRiskMetadata.sos_risk_real_danger_probability,
+                            false_alarm_probability: sosRiskMetadata.sos_risk_false_alarm_probability,
+                            confidence_band: sosRiskMetadata.sos_risk_confidence_band,
+                        },
+                    }),
+                ];
+                if (triage) {
+                    extraEvents.push(createTimelineEvent({
+                        type: 'sos_triaged',
+                        label: `SOS triaged ${triage.priority}${triage.category !== 'unspecified' ? ` (${triage.category})` : ''}`,
+                        actorRole: 'model',
+                        details: { priority: triage.priority, p_genuine: triage.p_genuine, category: triage.category, action: triage.action },
+                    }));
+                }
+                if (misuseMetadata.sos_misuse_flagged) {
+                    extraEvents.push(createTimelineEvent({
+                        type: 'misuse_shield_flagged',
+                        label: 'Incident flagged by misuse shield',
+                        actorRole: 'misuse-shield',
+                        details: {
+                            misuse_risk_score: misuseMetadata.sos_misuse_risk_score,
+                            misuse_risk_band: misuseMetadata.sos_misuse_risk_band,
+                        },
+                    }));
+                }
+                if (responderPlan.primary) {
+                    extraEvents.push(createTimelineEvent({
+                        type: 'responder_auto_assigned',
+                        label: 'Responder auto-assigned',
+                        actorRole: 'dispatcher',
+                        details: {
+                            primary_responder: responderPlan.primary,
+                            backup_responders: responderPlan.responders.slice(1),
+                        },
+                    }));
+                }
+
+                const $set: Record<string, any> = {
+                    'metadata.triggered_by_role': req.user!.role,
+                    'metadata.sos_auto_assignment': {
+                        generated_at: new Date().toISOString(),
+                        primary_responder: responderPlan.primary || null,
+                        responders: responderPlan.responders,
+                    },
+                };
+                for (const [key, value] of Object.entries({ ...sosRiskMetadata, ...misuseMetadata })) {
+                    $set[`metadata.${key}`] = value;
+                }
+                if (triage) $set['metadata.sos_triage'] = { ...triage, generated_at: new Date().toISOString() };
+                if (responderPlan.primary) $set.assigned_to = responderPlan.primary.user_id;
+                if (resolvedIncidentLatitude != null) $set.latitude = resolvedIncidentLatitude;
+                if (resolvedIncidentLongitude != null) $set.longitude = resolvedIncidentLongitude;
+
+                const updated = await Incident.findByIdAndUpdate(
+                    incident._id,
+                    { $set, $push: { 'metadata.crisis_timeline': { $each: extraEvents } } },
+                    { new: true }
+                )
+                    .populate('reporter', 'full_name role blockchain_id phone')
+                    .populate('zone', 'name risk_level')
+                    .populate('ward', 'name district')
+                    .populate('assigned_to', 'full_name designation role')
+                    .lean();
+
+                if (!io) return;
+                if (updated) {
+                    io.to('authority_room').emit('incident:updated', updated);
+                    io.to('authority_room').emit('incident-updated', updated);
+                    io.to(`incident_${incidentId}`).emit('incident-updated', updated);
+                }
+                const timelinePayload = { incident_id: incidentId, events: extraEvents, latest: extraEvents[extraEvents.length - 1] };
+                io.to('authority_room').to(`incident_${incidentId}`).emit('crisis:timeline', timelinePayload);
+                io.to(`user_${reporterId}`).emit('crisis:timeline', timelinePayload);
+
+                if (responderPlan.responders.length > 0) {
+                    const assignmentPayload = {
+                        incident_id: incidentId,
+                        responders: responderPlan.responders,
+                        primary_responder: responderPlan.responders[0],
+                    };
+                    io.to('authority_room').emit('responder:auto-assigned', assignmentPayload);
+                    io.to(`user_${reporterId}`).emit('sos:assignment', assignmentPayload);
+                    for (const responder of responderPlan.responders) {
+                        io.to(`user_${responder.user_id}`).emit('responder:auto-assigned', assignmentPayload);
+                    }
+                }
+                if (misuseMetadata.sos_misuse_flagged) {
+                    io.to('authority_room').emit('sos:misuse-flagged', {
+                        incident_id: incidentId,
+                        reporter_id: reporterId,
+                        misuse_risk_score: misuseMetadata.sos_misuse_risk_score,
+                        misuse_risk_band: misuseMetadata.sos_misuse_risk_band,
+                    });
+                }
+            })();
+
+            const guardianTask = (async () => {
+                if (!io) return;
+                await enrichTask.catch(() => undefined); // guardian dispatch wants the resolved location
+                const dispatch = await dispatchGuardianNetwork({
+                    io,
+                    incidentId,
+                    incidentTitle: body.title,
+                    reporterId,
+                    latitude: resolvedIncidentLatitude,
+                    longitude: resolvedIncidentLongitude,
+                });
+                if (!dispatch) return;
+                await Incident.findByIdAndUpdate(incident._id, {
+                    $set: { 'metadata.sos_guardian_dispatch': dispatch.summary },
+                    $push: { 'metadata.crisis_timeline': dispatch.timelineEvent },
+                });
+                const payload = { incident_id: incidentId, events: [dispatch.timelineEvent], latest: dispatch.timelineEvent };
+                io.to('authority_room').to(`incident_${incidentId}`).emit('crisis:timeline', payload);
+                io.to(`user_${reporterId}`).emit('crisis:timeline', payload);
+                io.to('authority_room').emit('guardian:dispatch-summary', { incident_id: incidentId, ...dispatch.summary });
+            })();
+
+            const smsTask = (async () => {
+                const reporter = (finalIncident as any).reporter;
+                const authorityRecipients = await Profile.find({
+                    role: { $in: [UserRole.AUTHORITY, UserRole.ADMIN] },
+                    is_active: true,
+                    phone: { $exists: true, $ne: '' },
+                }).select('_id full_name phone').lean();
+
+                const fallbackLatitude = toFiniteOrUndefined((finalIncident as any).metadata?.sos_risk_metrics?.latitude);
+                const fallbackLongitude = toFiniteOrUndefined((finalIncident as any).metadata?.sos_risk_metrics?.longitude);
+                const smsRecipients = process.env.SOS_SMS_TRIAL_ONLY_VERIFIED === 'true'
+                    ? []
+                    : authorityRecipients.map((authority: any) => ({
+                        user_id: String(authority._id),
+                        full_name: String(authority.full_name || 'Authority Officer'),
+                        phone: String(authority.phone || ''),
+                    }));
+
+                const smsSummary = await sendSosSmsNotifications(
+                    {
+                        incidentId,
+                        reporterName: String(reporter?.full_name || (finalIncident as any).metadata?.triggered_by_name || 'Unknown User'),
+                        reporterRole: String(reporter?.role || req.user!.role || 'user'),
+                        reporterPhone: reporter?.phone ? String(reporter.phone) : undefined,
+                        latitude: toFiniteOrUndefined((finalIncident as any).latitude) ?? fallbackLatitude,
+                        longitude: toFiniteOrUndefined((finalIncident as any).longitude) ?? fallbackLongitude,
+                        triggeredAt: new Date((finalIncident as any).created_at || Date.now()),
+                    },
+                    smsRecipients
+                );
+                await Incident.findByIdAndUpdate(incident._id, { $set: { 'metadata.sos_sms_dispatch': smsSummary } });
+                io?.to('authority_room').emit('sos:sms-dispatch', { incident_id: incidentId, dispatch: smsSummary });
+            })();
+
+            runAfterResponse(Promise.allSettled([enrichTask, guardianTask, smsTask]));
+        }
     } catch (err) {
         next(err);
     }
@@ -643,7 +667,11 @@ router.patch(
                 io.to('authority_room').emit('incident:updated', incidentObj);
                 io.to('authority_room').emit('incident-updated', incidentObj);
                 io.to(`incident_${incidentId}`).emit('incident-updated', incidentObj);
-                io.to('role_tourist').to('role_resident').to('role_business').emit('incident-updated', incidentObj);
+                if (incidentObj.is_public) {
+                    io.to('role_tourist').to('role_resident').to('role_business').emit('incident-updated', incidentObj);
+                } else if (incidentObj.reporter) {
+                    io.to(`user_${String((incidentObj.reporter as any)._id ?? incidentObj.reporter)}`).emit('incident-updated', incidentObj);
+                }
 
                 if (timelineEvents.length > 0) {
                     const timelinePayload = {
@@ -669,10 +697,22 @@ router.patch(
 router.post('/:id/evidence', authenticate, async (req: AuthRequest, res: Response, next) => {
     try {
         const bodyUrls = req.body?.urls;
-        const urls = Array.isArray(bodyUrls) ? bodyUrls : [];
+        const urls = (Array.isArray(bodyUrls) ? bodyUrls : [])
+            .filter((u: unknown): u is string => typeof u === 'string' && u.length > 0 && u.length <= 2048)
+            .slice(0, 20);
 
         if (urls.length === 0) {
-            res.status(400).json({ success: false, message: 'urls must be an array' });
+            res.status(400).json({ success: false, message: 'urls must be a non-empty array of strings' });
+            return;
+        }
+
+        const existing = await Incident.findById(req.params.id).select('reporter assigned_to').lean();
+        if (!existing) {
+            res.status(404).json({ success: false, message: 'Incident not found' });
+            return;
+        }
+        if (!canModifyEvidence(req.user!, existing)) {
+            res.status(403).json({ success: false, message: 'Forbidden' });
             return;
         }
 
@@ -705,6 +745,15 @@ router.post('/:id/evidence/upload', authenticate, async (req: AuthRequest, res: 
             }
 
             const urls = files.map((file) => toPublicUploadPath(file.path));
+            const existing = await Incident.findById(req.params.id).select('reporter assigned_to').lean();
+            if (!existing) {
+                res.status(404).json({ success: false, message: 'Incident not found' });
+                return;
+            }
+            if (!canModifyEvidence(req.user!, existing)) {
+                res.status(403).json({ success: false, message: 'Forbidden' });
+                return;
+            }
             const incident = await Incident.findByIdAndUpdate(
                 req.params.id,
                 { $push: { evidence_urls: { $each: urls } } },
@@ -724,6 +773,21 @@ router.post('/:id/evidence/upload', authenticate, async (req: AuthRequest, res: 
 });
 
 export default router;
+
+const idOf = (v: any): string | null => (v ? String(v._id ?? v) : null);
+
+function isStaff(user: { role: string }): boolean {
+    return user.role === UserRole.AUTHORITY || user.role === UserRole.ADMIN;
+}
+
+/** Staff see everything; others see public incidents and their own. */
+function canViewIncident(user: { userId: string; role: string }, incident: any): boolean {
+    return isStaff(user) || incident.is_public === true || idOf(incident.reporter) === user.userId;
+}
+
+function canModifyEvidence(user: { userId: string; role: string }, incident: any): boolean {
+    return isStaff(user) || idOf(incident.reporter) === user.userId || idOf(incident.assigned_to) === user.userId;
+}
 
 async function buildSosRiskMetadata(params: {
     reporterId: string;
@@ -797,10 +861,28 @@ async function buildSosRiskMetadata(params: {
     };
 
     const model = await scoreAnomalyRisk(metrics);
-    const hybridScore = combineRuleAndModelScore(SOS_RULE_SCORE, model.modelScore, SOS_MODEL_WEIGHT);
+    const localScore = combineRuleAndModelScore(SOS_RULE_SCORE, model.modelScore, SOS_MODEL_WEIGHT);
+
+    // Gemini gives its own read of how likely this SOS is a genuine emergency; blend it with the local score.
+    const gemini = await geminiJson<{ real_danger_probability?: number; reasoning?: string }>([
+        'You assess SOS panic-button events for a tourist-safety command centre.',
+        'Estimate the probability (0-1) that this SOS is a genuine emergency rather than a false alarm or accidental press.',
+        'Reply with JSON only: {"real_danger_probability": number, "reasoning": string under 30 words}.',
+        '',
+        JSON.stringify({ local_score: roundTo(localScore, 3), metrics, hour_utc: new Date().getUTCHours() }),
+    ].join('\n'), 5000);
+    const geminiScore = Number(gemini?.real_danger_probability);
+    const hasGemini = Number.isFinite(geminiScore);
+    const hybridScore = hasGemini
+        ? Math.min(1, Math.max(0, 0.65 * localScore + 0.35 * geminiScore))
+        : localScore;
     const falseAlarmProbability = 1 - hybridScore;
 
     return {
+        sos_risk_local_score: roundTo(localScore, 4),
+        sos_risk_gemini_score: hasGemini ? roundTo(geminiScore, 4) : null,
+        sos_risk_gemini_reasoning: gemini?.reasoning ? String(gemini.reasoning).slice(0, 240) : null,
+        sos_risk_provider: hasGemini ? 'gemini+model' : 'model',
         sos_risk_rule_score: roundTo(SOS_RULE_SCORE, 4),
         sos_risk_model_score: roundTo(model.modelScore, 4),
         sos_risk_hybrid_score: roundTo(hybridScore, 4),
@@ -822,7 +904,7 @@ async function buildSosRiskMetadata(params: {
     };
 }
 
-async function buildMisuseShieldMetadata(params: { reporterId: string }): Promise<MisuseShieldMetadata> {
+async function buildMisuseShieldMetadata(params: { reporterId: string; excludeId?: string }): Promise<MisuseShieldMetadata> {
     const now = Date.now();
     const start24h = new Date(now - 24 * 60 * 60 * 1000);
     const start7d = new Date(now - 7 * 24 * 60 * 60 * 1000);
@@ -844,9 +926,11 @@ async function buildMisuseShieldMetadata(params: { reporterId: string }): Promis
             status: AlertStatus.FALSE_ALARM,
             created_at: { $gte: start7d },
         }),
+        // The SOS being scored already exists; "time since the last SOS" must look at the one before it.
         Incident.findOne({
             reporter: params.reporterId,
             source: AlertSource.SOS_PANIC,
+            ...(params.excludeId ? { _id: { $ne: params.excludeId } } : {}),
         })
             .sort({ created_at: -1 })
             .select('created_at')
@@ -905,14 +989,28 @@ async function selectAutoResponders(params: {
 
     const cutoff = new Date(Date.now() - LOCATION_FRESHNESS_MINUTES * 60 * 1000);
 
-    const logs = await LocationLog.find({
-        recorded_at: { $gte: cutoff },
-        user: params.excludeUserId ? { $ne: params.excludeUserId } : { $exists: true },
-    })
-        .populate('user', 'full_name role ward designation is_active')
-        .sort({ recorded_at: -1 })
-        .limit(1800)
-        .lean();
+    // Latest ping per nearby user, joined with the profile server-side. (Loading and populating
+    // every recent log was the slowest step of an SOS.)
+    const dLat = SOS_RESPONDER_RADIUS_METERS / 111_320;
+    const dLng = SOS_RESPONDER_RADIUS_METERS / (111_320 * Math.max(0.2, Math.cos((latitude * Math.PI) / 180)));
+    const logs = await LocationLog.aggregate([
+        {
+            $match: {
+                recorded_at: { $gte: cutoff },
+                latitude: { $gte: latitude - dLat, $lte: latitude + dLat },
+                longitude: { $gte: longitude - dLng, $lte: longitude + dLng },
+                ...(params.excludeUserId && mongoose.Types.ObjectId.isValid(params.excludeUserId)
+                    ? { user: { $ne: new mongoose.Types.ObjectId(params.excludeUserId) } }
+                    : {}),
+            },
+        },
+        { $sort: { recorded_at: -1 } },
+        { $group: { _id: '$user', log: { $first: '$$ROOT' } } },
+        { $replaceRoot: { newRoot: '$log' } },
+        { $lookup: { from: 'profiles', localField: 'user', foreignField: '_id', as: 'user' } },
+        { $unwind: '$user' },
+        { $project: { latitude: 1, longitude: 1, recorded_at: 1, 'user._id': 1, 'user.full_name': 1, 'user.role': 1, 'user.ward': 1, 'user.designation': 1, 'user.is_active': 1 } },
+    ]);
 
     const candidatesByUser = new Map<string, ResponderCandidate>();
 

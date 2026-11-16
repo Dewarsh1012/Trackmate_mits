@@ -39,7 +39,7 @@ const updateStopSchema = z.object({
 router.get('/', authenticate, async (req: AuthRequest, res: Response, next) => {
     try {
         const filter: Record<string, any> = { tourist: req.user!.userId };
-        if (req.user!.role === UserRole.AUTHORITY) delete filter.tourist;
+        if (req.user!.role === UserRole.AUTHORITY || req.user!.role === UserRole.ADMIN) delete filter.tourist;
         const trips = await Trip.find(filter).sort({ created_at: -1 }).lean();
         res.json({ success: true, data: trips });
     } catch (err) {
@@ -111,6 +111,10 @@ router.get('/active', authenticate, async (req: AuthRequest, res: Response, next
 
 router.get('/:tripId/itinerary', authenticate, async (req: AuthRequest, res: Response, next) => {
     try {
+        if (!(await canAccessTrip(req, String(req.params.tripId)))) {
+            res.status(404).json({ success: false, message: 'Trip not found' });
+            return;
+        }
         const itinerary = await Itinerary.findOne({ trip: req.params.tripId as any })
             .populate({ path: 'stops', options: { sort: { sort_order: 1 } } })
             .lean();
@@ -123,6 +127,10 @@ router.get('/:tripId/itinerary', authenticate, async (req: AuthRequest, res: Res
 router.post('/:tripId/itinerary', authenticate, async (req: AuthRequest, res: Response, next) => {
     try {
         const { title, stops } = req.body;
+        if (!(await canAccessTrip(req, String(req.params.tripId), true))) {
+            res.status(404).json({ success: false, message: 'Trip not found' });
+            return;
+        }
         const itinerary = await Itinerary.create({
             trip: req.params.tripId as any,
             tourist: req.user!.userId,
@@ -152,6 +160,11 @@ router.post('/itinerary/:itineraryId/stops', authenticate, async (req: AuthReque
     try {
         const { ItineraryStop } = await import('../models');
         const body = stopSchema.parse(req.body);
+        const owned = await Itinerary.exists({ _id: req.params.itineraryId as any, tourist: req.user!.userId as any });
+        if (!owned) {
+            res.status(404).json({ success: false, message: 'Itinerary not found' });
+            return;
+        }
         const stop = await ItineraryStop.create({ ...body, itinerary: req.params.itineraryId as any });
         res.status(201).json({ success: true, data: stop });
     } catch (err) {
@@ -167,6 +180,12 @@ router.patch('/stops/:id', authenticate, async (req: AuthRequest, res: Response,
         if (updates.actual_arrival) extra.actual_arrival = new Date(updates.actual_arrival);
         if (updates.actual_departure) extra.actual_departure = new Date(updates.actual_departure);
 
+        const existing = await ItineraryStop.findById(req.params.id).select('itinerary').lean();
+        const owned = existing && await Itinerary.exists({ _id: (existing as any).itinerary, tourist: req.user!.userId as any });
+        if (!owned) {
+            res.status(404).json({ success: false, message: 'Stop not found' });
+            return;
+        }
         const stop = await ItineraryStop.findByIdAndUpdate(
             req.params.id,
             { $set: { ...updates, ...extra } },
@@ -177,5 +196,12 @@ router.patch('/stops/:id', authenticate, async (req: AuthRequest, res: Response,
         next(err);
     }
 });
+
+/** Owner of the trip, or (for reads) authority staff. */
+async function canAccessTrip(req: AuthRequest, tripId: string, ownerOnly = false): Promise<boolean> {
+    const staff = req.user!.role === UserRole.AUTHORITY || req.user!.role === UserRole.ADMIN;
+    if (staff && !ownerOnly) return true;
+    return Boolean(await Trip.exists({ _id: tripId as any, tourist: req.user!.userId as any }));
+}
 
 export default router;

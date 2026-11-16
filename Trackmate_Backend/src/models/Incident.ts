@@ -11,7 +11,7 @@ const incidentSchema = new Schema<IIncident>(
                 'crime', 'accident', 'medical_emergency', 'infrastructure_hazard',
                 'missing_person', 'suspicious_activity', 'crowd_emergency',
                 'natural_disaster', 'fire', 'route_deviation', 'zone_breach',
-                'unusual_speed', 'inactivity', 'incident_cluster', 'sos_emergency',
+                'unusual_speed', 'inactivity', 'incident_cluster', 'behaviour_anomaly', 'sos_emergency',
                 'other', 'checkin', 'safe_house_request'
             ],
         },

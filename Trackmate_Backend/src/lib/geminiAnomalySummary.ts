@@ -1,4 +1,5 @@
 import { AnomalyFeatureMetrics } from './anomalyModel';
+import { geminiJson } from './gemini';
 
 interface GeminiAnomalySummaryInput {
     incidentType: string;
@@ -11,72 +12,40 @@ interface GeminiAnomalySummaryInput {
     metrics: AnomalyFeatureMetrics;
 }
 
-interface GeminiResponse {
-    candidates?: Array<{
-        content?: {
-            parts?: Array<{ text?: string }>;
-        };
-    }>;
+export interface GeminiAnomalyAssessment {
+    /** Gemini's own 0..1 estimate that this is a genuine emergency. */
+    score: number | null;
+    summary: string | null;
 }
 
-const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
-const DEFAULT_GEMINI_MODEL = 'gemini-1.5-flash';
 const MAX_SUMMARY_CHARS = 360;
 
-export async function generateGeminiAnomalySummary(
-    payload: GeminiAnomalySummaryInput
-): Promise<string | null> {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) return null;
+/** Asks Gemini to score the anomaly and write a triage summary in one call. */
+export async function assessAnomalyWithGemini(payload: GeminiAnomalySummaryInput): Promise<GeminiAnomalyAssessment> {
+    const result = await geminiJson<{ score?: number; summary?: string }>(buildPrompt(payload));
+    if (!result) return { score: null, summary: null };
 
-    const model = process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL;
-    const timeoutMs = parsePositiveInt(process.env.GEMINI_TIMEOUT_MS, 3500);
+    const score = Number(result.score);
+    const summary = typeof result.summary === 'string' ? result.summary.trim() : '';
+    return {
+        score: Number.isFinite(score) ? Math.max(0, Math.min(1, score)) : null,
+        summary: summary
+            ? (summary.length > MAX_SUMMARY_CHARS ? `${summary.slice(0, MAX_SUMMARY_CHARS - 3)}...` : summary)
+            : null,
+    };
+}
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-    try {
-        const prompt = buildPrompt(payload);
-        const response = await fetch(
-            `${GEMINI_BASE_URL}/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`,
-            {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    contents: [{ parts: [{ text: prompt }] }],
-                    generationConfig: {
-                        temperature: 0.2,
-                        maxOutputTokens: 120,
-                    },
-                }),
-                signal: controller.signal,
-            }
-        );
-
-        if (!response.ok) return null;
-        const data = (await response.json()) as GeminiResponse;
-        const text = data.candidates?.[0]?.content?.parts
-            ?.map((part) => part.text || '')
-            .join(' ')
-            .trim();
-
-        if (!text) return null;
-        return text.length > MAX_SUMMARY_CHARS
-            ? `${text.slice(0, MAX_SUMMARY_CHARS - 3)}...`
-            : text;
-    } catch {
-        return null;
-    } finally {
-        clearTimeout(timer);
-    }
+export async function generateGeminiAnomalySummary(payload: GeminiAnomalySummaryInput): Promise<string | null> {
+    return (await assessAnomalyWithGemini(payload)).summary;
 }
 
 function buildPrompt(payload: GeminiAnomalySummaryInput): string {
     const { incidentType, severity, ruleScore, modelScore, hybridScore, metrics, description } = payload;
     return [
-        'You are assisting an emergency-response authority dashboard.',
-        'Return a concise triage summary with one recommended first action.',
-        'Keep it under 70 words. No markdown, no bullets.',
+        'You assist an emergency-response authority dashboard for tourist safety.',
+        'Assess whether the detected anomaly is likely a genuine emergency.',
+        'Reply with JSON only: {"score": number between 0 and 1 (probability of a genuine emergency), "summary": string}.',
+        'The summary is a triage note under 70 words with one recommended first action. No markdown, no bullets.',
         '',
         `Incident type: ${incidentType}`,
         `Severity: ${severity}`,
@@ -86,10 +55,4 @@ function buildPrompt(payload: GeminiAnomalySummaryInput): string {
         `Description: ${description}`,
         `Metrics: inactivity=${metrics.inactivityMinutes.toFixed(1)}m, speed=${metrics.speedKmh.toFixed(1)}km/h, outsideZone=${metrics.isOutsideZone}, nearbyIncidents=${metrics.nearbyIncidents15m}, nearbyCritical=${metrics.nearbyCriticalIncidents15m}, userAnomalies24h=${metrics.userAnomalies24h}`,
     ].join('\n');
-}
-
-function parsePositiveInt(value: string | undefined, fallback: number): number {
-    const parsed = Number(value);
-    if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
-    return Math.floor(parsed);
 }

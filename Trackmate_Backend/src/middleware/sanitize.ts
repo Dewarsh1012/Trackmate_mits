@@ -5,7 +5,8 @@ function hasUnsafeKey(key: string): boolean {
 }
 
 function stripControlChars(value: string): string {
-    return value.replace(/[\u0000-\u001F\u007F]/g, '');
+    // Keeps tab, line feed and carriage return: multi-line text (descriptions, signed messages) must survive intact.
+    return value.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
 }
 
 function stripScriptTags(value: string): string {

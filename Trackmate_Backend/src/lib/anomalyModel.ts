@@ -5,6 +5,8 @@ import { AlertSource } from '../types';
 import { calculateSpeed, distanceInMeters, findZoneForPoint } from './geofence';
 
 const MODEL_FILE_PATH = path.join(process.cwd(), 'data', 'anomaly-model.json');
+// Serverless filesystems are read-only (except /tmp); retrained models land there.
+const WRITABLE_MODEL_PATH = process.env.VERCEL ? '/tmp/anomaly-model.json' : MODEL_FILE_PATH;
 const TRAINING_WINDOW_DAYS = 45;
 const RECENT_INCIDENT_WINDOW_MS = 15 * 60 * 1000;
 const RECENT_USER_ANOMALY_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -280,15 +282,15 @@ async function loadAnomalyModel(): Promise<StoredAnomalyModel> {
 }
 
 async function persistModel(model: StoredAnomalyModel): Promise<void> {
-    await fs.mkdir(path.dirname(MODEL_FILE_PATH), { recursive: true });
-    await fs.writeFile(MODEL_FILE_PATH, JSON.stringify(model, null, 2), 'utf-8');
+    await fs.mkdir(path.dirname(WRITABLE_MODEL_PATH), { recursive: true });
+    await fs.writeFile(WRITABLE_MODEL_PATH, JSON.stringify(model, null, 2), 'utf-8');
     cachedModel = model;
     cacheLoadedAt = Date.now();
 }
 
 async function readModelFromDisk(): Promise<StoredAnomalyModel | null> {
     try {
-        const file = await fs.readFile(MODEL_FILE_PATH, 'utf-8');
+        const file = await fs.readFile(WRITABLE_MODEL_PATH, 'utf-8').catch(() => fs.readFile(MODEL_FILE_PATH, 'utf-8'));
         const parsed = JSON.parse(file) as StoredAnomalyModel;
         if (
             !Array.isArray(parsed.weights) ||

@@ -83,6 +83,7 @@ router.get(
                 .populate('user', 'full_name role blockchain_id avatar_url')
                 .populate('current_zone', 'name risk_level')
                 .sort({ recorded_at: -1 })
+                .limit(Math.min(1000, parseInt(String(_req.query.limit || '500'), 10) || 500))
                 .lean();
             res.json({ success: true, data: logs });
         } catch (err) {
@@ -106,6 +107,7 @@ router.get(
                 recorded_at: { $gte: cutoff },
             })
                 .sort({ recorded_at: -1 })
+                .limit(Math.min(1000, parseInt(String(req.query.limit || '500'), 10) || 500))
                 .lean();
             res.json({ success: true, data: logs });
         } catch (err) {

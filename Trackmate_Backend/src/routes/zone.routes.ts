@@ -59,6 +59,7 @@ router.post(
                 ...body,
                 managed_by: req.user!.userId,
             });
+            notifyZonesChanged(req);
             res.status(201).json({ success: true, data: zone });
         } catch (err) {
             next(err);
@@ -84,6 +85,7 @@ router.patch(
                 res.status(404).json({ success: false, message: 'Zone not found' });
                 return;
             }
+            notifyZonesChanged(req);
             res.json({ success: true, data: zone });
         } catch (err) {
             next(err);
@@ -104,11 +106,18 @@ router.delete(
                 res.status(404).json({ success: false, message: 'Zone not found' });
                 return;
             }
+            notifyZonesChanged(_req);
             res.json({ success: true, message: 'Zone deleted' });
         } catch (err) {
             next(err);
         }
     }
 );
+
+/** Zones are shared map data: tell every connected client to refetch them. */
+function notifyZonesChanged(req: AuthRequest): void {
+    const io = (req as any).app.get('io');
+    io?.to('authority_room').to('role_tourist').to('role_resident').to('role_business').emit('zones:changed', { at: new Date().toISOString() });
+}
 
 export default router;
