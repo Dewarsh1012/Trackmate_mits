@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Users, AlertTriangle, Map, Fingerprint, BarChart3, Bell, Building2, Home, LogOut, CheckCircle2, Globe } from 'lucide-react';
+import { LayoutDashboard, Users, AlertTriangle, Map, Fingerprint, BarChart3, Bell, Building2, Home, LogOut, CheckCircle2, Globe, Wallet } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useLanguage, LANGUAGES } from '../../i18n';
 import { useState } from 'react';
@@ -84,6 +84,10 @@ export default function AuthoritySidebar() {
         <NavLink to="/authority/efir" className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}>
           <Fingerprint size={18} />
           <span>{t('efirSystem')}</span>
+        </NavLink>
+        <NavLink to="/authority/wallet" className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}>
+          <Wallet size={18} />
+          <span>Wallet Verify</span>
         </NavLink>
         <NavLink to="/authority/analytics" className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}>
           <BarChart3 size={18} />

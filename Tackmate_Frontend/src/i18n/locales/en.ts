@@ -311,6 +311,8 @@ const en = {
   deleteZoneConfirm: 'Delete this zone permanently?',
   reporterLocationUnavailable: "Reporter's live location is currently unavailable.",
   searchZonesPlaceholder: 'Search zones...',
+  more: 'More',
+  authorityTools: 'Authority Tools',
 };
 
 export default en;

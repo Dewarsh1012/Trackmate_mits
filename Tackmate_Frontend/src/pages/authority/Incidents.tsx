@@ -5,6 +5,7 @@ import api from '../../lib/api';
 import { Link } from 'react-router-dom';
 import AuthoritySidebar from '../../components/layout/AuthoritySidebar';
 import { CLAY_COLORS as C, CLAY_CARD_STYLE as clayCard } from '../../theme/clayTheme';
+import TriageBadge from '../../components/ml/TriageBadge';
 
 const severityStyle = (sev: string): React.CSSProperties => {
     switch (sev?.toUpperCase()) {
@@ -133,6 +134,7 @@ export default function AuthorityIncidents() {
                                             <td>
                                                 <p style={{ fontWeight: 800, color: C.text, margin: 0, fontSize: '0.95rem' }}>{inc.title}</p>
                                                 <p style={{ fontSize: '0.72rem', color: C.textSecondary, margin: '4px 0 0', textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 700, background: C.surfaceAlt, display: 'inline-block', padding: '2px 8px', borderRadius: 6, border: `1px solid ${C.border}` }}>{inc.incident_type}</p>
+                                                {inc.metadata?.sos_triage && <div style={{ marginTop: 6 }}><TriageBadge triage={inc.metadata.sos_triage} compact /></div>}
                                             </td>
                                             <td>
                                                 <span style={{ ...severityStyle(inc.severity), padding: '4px 10px', fontSize: '0.68rem', fontWeight: 800, textTransform: 'uppercase', borderRadius: 8, display: 'inline-block', marginBottom: 6 }}>{inc.severity}</span>

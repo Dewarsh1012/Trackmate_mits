@@ -63,7 +63,7 @@ export default function AuthPage() {
     const requestedRole = params.get('role');
     const initRole: RegisterRole = isRegisterRole(requestedRole) ? requestedRole : 'tourist';
 
-    const [mode, setMode] = useState<'login' | 'register'>('register');
+    const [mode, setMode] = useState<'login' | 'register'>(params.get('mode') === 'login' ? 'login' : 'register');
     const [role, setRole] = useState<RegisterRole>(initRole);
     const [blockchainId, setBlockchainId] = useState<string | null>(null);
     const [copied, setCopied] = useState(false);
@@ -90,7 +90,7 @@ export default function AuthPage() {
     };
 
     const onLogin = async (data: LoginInput) => {
-        try { setErrorMsg(''); const user = await login(data.email, data.password); navigate(`/${user.role}/dashboard`); }
+        try { setErrorMsg(''); const user = await login(data.email, data.password); navigate(`/${user.role === 'admin' ? 'authority' : user.role}/dashboard`); }
         catch (error: unknown) { setErrorMsg(getApiErrorMessage(error, 'Login failed')); }
     };
 

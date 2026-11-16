@@ -1019,3 +1019,57 @@ html, body {
         min-height: 280px !important;
     }
 }
+
+
+/* ═══ Mobile polish ═══ */
+html, body { max-width: 100%; overflow-x: hidden; -webkit-text-size-adjust: 100%; }
+img, svg, video { max-width: 100%; }
+
+@media (max-width: 768px) {
+    /* Stat tiles stay two-up on phones instead of one huge card each. */
+    .grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 10px !important; }
+    .grid-4 > * { padding: 12px !important; min-width: 0; }
+    .grid-4 > * div[style*="font-size: 2rem"], .grid-4 > * div[style*="font-size:2rem"] { font-size: 1.5rem !important; }
+
+    /* 16px inputs stop iOS from zooming the page on focus. */
+    input, select, textarea { font-size: 16px !important; }
+
+    /* Comfortable touch targets. */
+    .geo-btn, .btn { min-height: 44px; }
+
+    /* Wide tables scroll inside their card instead of the page. */
+    .clay-table-container, .geo-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .geo-table { min-width: 560px; }
+
+    /* Bottom nav clears the iOS home indicator. */
+    .mobile-nav-bar { padding-bottom: env(safe-area-inset-bottom); }
+
+    /* Leaflet draw/search overlays shouldn't cover the whole phone map. */
+    .leaflet-control-container .leaflet-top.leaflet-left { transform: scale(0.9); transform-origin: top left; }
+}
+
+@media (max-width: 340px) {
+    .grid-4 { grid-template-columns: 1fr !important; }
+}
+
+/* Flex children default to min-width:auto, so one wide table/map could stretch a whole page past the viewport. */
+.page-with-sidebar { min-width: 0; max-width: 100%; }
+.page-with-sidebar > * { min-width: 0; max-width: 100%; }
+
+@media (max-width: 768px) {
+    /* Rosters: keep identity + verification on phones; contact, ID and score live on the detail page. */
+    .roster-table { min-width: 0 !important; }
+    .roster-table th:nth-child(2), .roster-table td:nth-child(2),
+    .roster-table th:nth-child(3), .roster-table td:nth-child(3),
+    .roster-table th:nth-child(4), .roster-table td:nth-child(4) { display: none; }
+}
+
+/* Grid items must be allowed to shrink below their content width or long text pushes cards off-screen. */
+.responsive-grid > *, .grid-3 > *, .grid-2 > * { min-width: 0; }
+
+/* Trip planner: two-column forms collapse on phones so fields (especially date-time pickers) stay readable. */
+.trip-form-grid > * { min-width: 0; }
+@media (max-width: 560px) {
+    .trip-form-grid { grid-template-columns: minmax(0, 1fr) !important; }
+    .trip-card { padding: 16px !important; }
+}

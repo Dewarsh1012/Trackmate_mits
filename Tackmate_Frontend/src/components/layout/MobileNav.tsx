@@ -20,6 +20,7 @@ import {
     LogOut,
     Globe,
     ChevronRight,
+    Wallet,
 } from 'lucide-react';
 import { CLAY_COLORS as C } from '../../theme/clayTheme';
 
@@ -67,6 +68,7 @@ export default function MobileNav() {
         { to: '/authority/residents', icon: <Home size={18} color={C.safe} />, label: t('residents') || 'Residents' },
         { to: '/authority/businesses', icon: <Building2 size={18} color={C.moderate} />, label: t('businesses') || 'Businesses' },
         { to: '/authority/checkins', icon: <CheckCircle2 size={18} color={C.primaryLight} />, label: t('dailyCheckins') || 'Check-ins' },
+        { to: '/authority/wallet', icon: <Wallet size={18} color="#F6851B" />, label: 'Wallet Verify' },
         { to: '/authority/analytics', icon: <BarChart3 size={18} color={C.accent} />, label: t('safetyAnalytics') || 'Analytics' },
         { to: '/authority/alerts', icon: <Bell size={18} color={C.critical} />, label: t('sendAlert') || 'Send Alert' },
     ];

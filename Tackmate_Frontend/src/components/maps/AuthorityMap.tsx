@@ -30,11 +30,44 @@ const RISK_COLORS: Record<string, string> = {
     restricted: '#A78BFA',
 };
 
-function RecenterMap({ lat, lng, zoom }: { lat: number; lng: number; zoom?: number }) {
+/** Follows `focusLocation` (zone search, live tracking). Zoom is only forced by an explicit request, so a user's own zoom survives live updates. */
+function RecenterMap({ lat, lng, zoom, nonce }: { lat: number; lng: number; zoom?: number; nonce?: number }) {
+    const map = useMap();
+    const lastNonce = useRef(nonce);
+    useEffect(() => {
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+        const explicit = nonce !== lastNonce.current;
+        lastNonce.current = nonce;
+        const target = explicit && zoom ? zoom : (zoom ? Math.max(map.getZoom(), 13) : map.getZoom());
+        map.setView([lat, lng], target, { animate: true });
+    }, [lat, lng, zoom, nonce, map]);
+    return null;
+}
+
+/** One-shot view commands from the toolbar. Each carries a nonce, so repeating the same command (same place) still works. */
+export type MapViewCommand =
+    | { type: 'focus'; lat: number; lng: number; zoom?: number; nonce: number }
+    | { type: 'fit'; points: Array<[number, number]>; nonce: number }
+    | { type: 'reset'; nonce: number };
+
+const DEFAULT_CENTER: [number, number] = [27.5866, 91.8698]; // Tawang
+const DEFAULT_ZOOM = 12;
+
+function MapCommander({ command }: { command?: MapViewCommand | null }) {
     const map = useMap();
     useEffect(() => {
-        if (lat && lng) map.setView([lat, lng], zoom ?? map.getZoom(), { animate: true });
-    }, [lat, lng, zoom, map]);
+        if (!command) return;
+        map.invalidateSize();
+        if (command.type === 'reset') {
+            map.setView(DEFAULT_CENTER, DEFAULT_ZOOM, { animate: true });
+        } else if (command.type === 'focus') {
+            map.setView([command.lat, command.lng], command.zoom ?? 16, { animate: true });
+        } else if (command.points.length) {
+            map.fitBounds(L.latLngBounds(command.points), { padding: [60, 60], maxZoom: 16, animate: true });
+        }
+        // Only a new command (new nonce) should move the map.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [command?.nonce, map]);
     return null;
 }
 
@@ -53,20 +86,24 @@ function MapResizer() {
 interface AuthorityMapProps {
     zones: ZoneData[];
     incidents: any[];
-    userLocations: Record<string, { lat: number; lng: number; role?: string; name?: string; timestamp?: number }>;
+    userLocations: Record<string, { lat: number; lng: number; role?: string; name?: string; timestamp?: number; areaSafety?: number }>;
     focusLocation?: { lat: number; lng: number } | null;
+    /** Bumped when the user asks to focus again, even on the same coordinates. */
+    focusNonce?: number;
+    viewCommand?: MapViewCommand | null;
+    trackedUserId?: string | null;
     onZoneCreated?: (layer: any, color?: string) => void;
     onZoneDeleted?: (zoneId: string) => void;
     drawColor?: string;
     height?: string | number;
 }
 
-export default function AuthorityMap({ zones, incidents, userLocations, focusLocation, onZoneCreated, onZoneDeleted, drawColor = '#FF0033', height = '100%' }: AuthorityMapProps) {
+export default function AuthorityMap({ zones, incidents, userLocations, focusLocation, focusNonce, viewCommand, trackedUserId, onZoneCreated, onZoneDeleted, drawColor = '#FF0033', height = '100%' }: AuthorityMapProps) {
     const safeZones = zones || [];
     const safeIncidents = incidents || [];
     const safeUserLocations = userLocations || {};
 
-    const defaultCenter: [number, number] = [27.5866, 91.8698]; // Tawang
+    const defaultCenter = DEFAULT_CENTER;
 
     // Determine center based on focus or default
     const centerLat = focusLocation?.lat || defaultCenter[0];
@@ -76,7 +113,7 @@ export default function AuthorityMap({ zones, incidents, userLocations, focusLoc
         <div style={{ height: typeof height === 'number' ? `${height}px` : height, width: '100%', minHeight: typeof height === 'number' ? `${height}px` : '420px', borderRadius: 'var(--radius-lg)', overflow: 'hidden', border: '1px solid var(--color-border)', boxShadow: 'var(--clay-shadow-sm)' }}>
             <MapContainer
                 center={[centerLat, centerLng] as [number, number]}
-                zoom={focusLocation ? 16 : 12}
+                zoom={focusLocation ? 16 : DEFAULT_ZOOM}
                 style={{ height: '100%', width: '100%', background: 'var(--color-bg-deep)' }}
             >
                 <MapResizer />
@@ -86,7 +123,9 @@ export default function AuthorityMap({ zones, incidents, userLocations, focusLoc
                     maxZoom={19}
                 />
 
-                <RecenterMap lat={centerLat} lng={centerLng} zoom={focusLocation ? 16 : undefined} />
+                <RecenterMap lat={centerLat} lng={centerLng} zoom={focusLocation ? 16 : undefined} nonce={focusNonce} />
+                {/* After RecenterMap so an explicit toolbar command wins when both fire together. */}
+                <MapCommander command={viewCommand} />
 
                 {/* Zone overlays */}
                 {safeZones.filter(z => typeof z.center_lat === 'number' && typeof z.center_lng === 'number').map((zone) => {
@@ -167,10 +206,24 @@ export default function AuthorityMap({ zones, incidents, userLocations, focusLoc
 
                 {/* Real-time User Locations */}
                 {Object.entries(safeUserLocations).map(([userId, loc]) => {
-                    if (typeof loc.lat !== 'number' || typeof loc.lng !== 'number') return null;
+                    if (!loc || typeof loc.lat !== 'number' || typeof loc.lng !== 'number') return null;
                     // Check if active (within last 5 mins)
+                    const isTracked = trackedUserId === userId;
                     const isActive = loc.timestamp ? (Date.now() - loc.timestamp) < 5 * 60 * 1000 : true;
-                    if (!isActive) return null;
+                    if (!isActive && !isTracked) return null;
+
+                    if (isTracked) {
+                        return (
+                            <span key={userId}>
+                                <Circle center={[loc.lat, loc.lng]} radius={45} pathOptions={{ color: '#EF4444', fillColor: '#EF4444', fillOpacity: 0.18, weight: 1.5 }} />
+                                <CircleMarker center={[loc.lat, loc.lng]} radius={11} pathOptions={{ fillColor: '#EF4444', color: '#fff', weight: 3, fillOpacity: 1 }}>
+                                    <Tooltip direction="top" offset={[0, -12]} opacity={1} permanent>
+                                        <div className="text-xs font-bold">{loc.name || 'Tracked user'}{typeof loc.areaSafety === 'number' ? ` · area ${loc.areaSafety}%` : ''}</div>
+                                    </Tooltip>
+                                </CircleMarker>
+                            </span>
+                        );
+                    }
 
                     const color = loc.role === 'tourist'
                         ? '#6C63FF'
@@ -186,6 +239,7 @@ export default function AuthorityMap({ zones, incidents, userLocations, focusLoc
                             <Tooltip direction="top" offset={[0, -10]} opacity={1}>
                                 <div className="text-xs font-bold">{loc.name || 'User'}</div>
                                 <div className="text-[9px] uppercase tracking-wider opacity-80">{loc.role || 'Unknown'}</div>
+                                {typeof loc.areaSafety === 'number' && <div className="text-[9px] font-bold">Area safety {loc.areaSafety}%</div>}
                             </Tooltip>
                         </CircleMarker>
                     );

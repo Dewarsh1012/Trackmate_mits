@@ -95,9 +95,10 @@ async function getFreshBrowserLocation(): Promise<{ latitude: number; longitude:
     try {
         const position = await new Promise<GeolocationPosition>((resolve, reject) =>
             navigator.geolocation.getCurrentPosition(resolve, reject, {
-                enableHighAccuracy: true,
-                timeout: 10000,
-                maximumAge: 0,
+                // An SOS must not wait on a GPS fix: accept a recent one, give up fast.
+                enableHighAccuracy: false,
+                timeout: 2000,
+                maximumAge: 60000,
             })
         );
 
@@ -383,7 +384,7 @@ export default function BusinessDashboard() {
                 return;
             }
 
-            await api.post('/incidents', payload);
+            await api.post('/incidents', payload, { timeout: 6000 });
             setSosSuccess(true);
             setNotice('SOS dispatched. Authority phones are being notified with your location and directions link.');
             window.setTimeout(() => setSosSuccess(false), 6000);

@@ -1,7 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Calendar, Download, RefreshCw, Loader2, AlertCircle, Activity, Users } from 'lucide-react';
 import api from '../../lib/api';
 import AuthoritySidebar from '../../components/layout/AuthoritySidebar';
+import HeatMap from '../../components/maps/HeatMap';
+import ForecastPanel from '../../components/ml/ForecastPanel';
+import ModelStatusPanel from '../../components/ml/ModelStatusPanel';
 import { CLAY_COLORS as C, CLAY_CARD_STYLE as clayCard } from '../../theme/clayTheme';
 
 export default function AuthorityAnalytics() {
@@ -11,6 +14,18 @@ export default function AuthorityAnalytics() {
     const [touristStats, setTouristStats] = useState<any>(null);
     const [zoneStats, setZoneStats] = useState<any>(null);
     const [summary, setSummary] = useState<any>(null);
+    const [mapZones, setMapZones] = useState<any[]>([]);
+
+    // The API returns one row per (day, incident type); the chart needs one bar per day.
+    const incidentByDay = useMemo(() => {
+        const totals = new Map<string, number>();
+        for (const row of incidentStats?.byDay || []) {
+            const date = row?._id?.date;
+            if (date) totals.set(date, (totals.get(date) || 0) + (row.count || 0));
+        }
+        return [...totals.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, count]) => ({ date, count }));
+    }, [incidentStats]);
+
     const [anomalyModelStatus, setAnomalyModelStatus] = useState<any>(null);
     const [modelActionLoading, setModelActionLoading] = useState(false);
     const [modelActionMessage, setModelActionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -54,7 +69,8 @@ export default function AuthorityAnalytics() {
     const fetchAnalytics = async () => {
         try {
             setLoading(true); setError(null);
-            const [incRes, tourRes, zoneRes, sumRes] = await Promise.all([api.get('/analytics/incidents'), api.get('/analytics/tourists'), api.get('/analytics/zones'), api.get('/analytics/summary')]);
+            const [incRes, tourRes, zoneRes, sumRes, zonesListRes] = await Promise.all([api.get('/analytics/incidents'), api.get('/analytics/tourists'), api.get('/analytics/zones'), api.get('/analytics/summary'), api.get('/zones')]);
+            if (zonesListRes.data.success) setMapZones(zonesListRes.data.data || []);
             if (incRes.data.success) setIncidentStats(incRes.data.data);
             if (tourRes.data.success) setTouristStats(tourRes.data.data);
             if (zoneRes.data.success) setZoneStats(zoneRes.data.data);
@@ -139,13 +155,12 @@ export default function AuthorityAnalytics() {
     };
 
     const summaryCards = [
-        { title: 'Total Users', value: summary?.totalUsers || 0, icon: <Users size={20} />, accent: C.primary, trend: '+4%', pos: true },
-        { title: 'Active Crises', value: summary?.openIncidents || 0, icon: <Activity size={20} />, accent: C.high, trend: '-12%', pos: false },
-        { title: 'SOS (1h)', value: summary?.sosLastHour || 0, icon: <AlertCircle size={20} />, accent: C.critical, trend: 'Critical', pos: false },
-        { title: 'Live Connections', value: summary?.activeUsersToday || 0, icon: <RefreshCw size={20} />, accent: C.safe, trend: 'Stable', pos: true },
+        { title: 'Total Users', value: summary?.totalUsers || 0, icon: <Users size={20} />, accent: C.primary, trend: `${summary?.totalTourists || 0} tourists`, pos: true },
+        { title: 'Active Crises', value: summary?.openIncidents || 0, icon: <Activity size={20} />, accent: C.high, trend: (summary?.openIncidents || 0) > 0 ? 'Needs attention' : 'All clear', pos: !(summary?.openIncidents > 0) },
+        { title: 'SOS (1h)', value: summary?.sosLastHour || 0, icon: <AlertCircle size={20} />, accent: C.critical, trend: (summary?.sosLastHour || 0) > 0 ? 'Critical' : 'None', pos: !(summary?.sosLastHour > 0) },
+        { title: 'Live Connections', value: summary?.activeUsersToday || 0, icon: <RefreshCw size={20} />, accent: C.safe, trend: 'Today', pos: true },
     ];
 
-    const incidentByDay = incidentStats?.byDay || [];
     const touristDaily = touristStats?.daily || [];
     const zoneList = zoneStats || [];
 
@@ -194,20 +209,21 @@ export default function AuthorityAnalytics() {
                     {/* Incident bar chart */}
                     <div style={{ ...clayCard, padding: '24px' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-                            <h3 style={{ fontSize: '0.78rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: C.text, margin: 0 }}>Incident Distribution (Last 15 Days)</h3>
+                            <h3 style={{ fontSize: '0.78rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: C.text, margin: 0 }}>Incidents per Day (Last 15 Days)</h3>
                             <div style={{ display: 'flex', gap: 12 }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.68rem', fontWeight: 700, color: C.high }}><div style={{ width: 10, height: 10, background: C.high }} /> Critical</div>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.68rem', fontWeight: 700, color: C.moderate }}><div style={{ width: 10, height: 10, background: C.moderate }} /> Warning</div>
                             </div>
                         </div>
                         <div style={{ height: 160, display: 'flex', alignItems: 'flex-end', gap: 4 }}>
-                            {incidentByDay.length > 0 ? incidentByDay.slice(-15).map((d: any, i: number) => {
-                                const maxCount = Math.max(...incidentByDay.map((x: any) => x.count || 0), 1);
+                            {incidentByDay.length > 0 ? incidentByDay.slice(-15).map((d: any) => {
+                                const maxCount = Math.max(...incidentByDay.slice(-15).map((x: any) => x.count || 0), 1);
                                 const pct = ((d.count || 0) / maxCount) * 100;
                                 return (
-                                    <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-                                        <div style={{ width: '100%', background: i % 2 === 0 ? C.high : C.moderate, height: `${Math.max(pct, 4)}%`, border: `1px solid ${C.border}`, transition: 'height 0.3s' }} />
-                                        <span style={{ fontSize: '0.6rem', fontWeight: 700, color: C.textMuted, transform: 'rotate(45deg)', whiteSpace: 'nowrap' }}>{d._id?.date?.split('-').slice(1).join('/') || i}</span>
+                                    <div key={d.date} title={`${d.date}: ${d.count} incident${d.count === 1 ? '' : 's'}`} style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', gap: 4, height: '100%' }}>
+                                        <span style={{ fontSize: '0.62rem', fontWeight: 800, color: C.text }}>{d.count}</span>
+                                        <div style={{ width: '100%', background: pct > 66 ? C.high : pct > 33 ? C.moderate : C.safe, height: `${Math.max(pct, 4) * 0.8}%`, border: `1px solid ${C.border}`, borderRadius: 4, transition: 'height 0.4s' }} />
+                                        <span style={{ fontSize: '0.58rem', fontWeight: 700, color: C.textMuted, whiteSpace: 'nowrap' }}>{d.date.split('-').slice(1).join('/')}</span>
                                     </div>
                                 );
                             }) : <p style={{ color: C.textMuted, fontSize: '0.88rem', margin: 'auto', fontWeight: 600 }}>No data available</p>}
@@ -232,13 +248,22 @@ export default function AuthorityAnalytics() {
                                             <div style={{ height: '100%', background: riskColor, width: `${Math.min(activeIncidents * 20, 100)}%`, transition: 'width 0.4s' }} />
                                         </div>
                                         <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 3, fontSize: '0.68rem', fontWeight: 600, color: C.textMuted }}>
-                                            <span>{activeIncidents} Active</span><span>Score: {100 - activeIncidents * 10}%</span>
+                                            <span>{activeIncidents} Active</span><span>Score: {Math.max(0, 100 - activeIncidents * 10)}%</span>
                                         </div>
                                     </div>
                                 );
                             }) : <p style={{ color: C.textMuted, fontWeight: 600 }}>No zone data</p>}
                         </div>
                     </div>
+                </div>
+
+                {/* ML: next-24h zone risk forecast */}
+                <ForecastPanel />
+
+                {/* Heatmaps: incident distribution and tourist load */}
+                <div style={{ ...clayCard, padding: 'clamp(14px, 3vw, 24px)', marginBottom: 20 }}>
+                    <h3 style={{ fontSize: '0.78rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', color: C.text, margin: '0 0 14px' }}>Heatmaps: Incident Distribution and Tourist Load</h3>
+                    <HeatMap zones={mapZones} />
                 </div>
 
                 {/* Bottom row */}
@@ -302,6 +327,9 @@ export default function AuthorityAnalytics() {
                         </button>
                     </div>
                 </div>
+
+                {/* ML: model status and retraining */}
+                <div style={{ marginTop: 20 }}><ModelStatusPanel /></div>
 
                 {/* AI anomaly controls */}
                 <div className="responsive-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginTop: 20 }}>

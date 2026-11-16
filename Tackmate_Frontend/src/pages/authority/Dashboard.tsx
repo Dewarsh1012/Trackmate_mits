@@ -1,11 +1,15 @@
-import { useState, useEffect, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import TriageBadge from '../../components/ml/TriageBadge';
 import { useAuth } from '../../context/AuthContext';
 import { useSocket } from '../../context/SocketContext';
 import { useLanguage } from '../../i18n';
 import api from '../../lib/api';
-import { AlertTriangle, RefreshCw, Loader2, TrendingUp, Search, Users, Zap, Shield, MapPin, Eye, Activity, Globe, CheckCircle2, Clock } from 'lucide-react';
-import AuthorityMap from '../../components/maps/AuthorityMap';
+import { Megaphone, AlertTriangle, RefreshCw, Loader2, TrendingUp, Search, Users, Zap, Shield, MapPin, Eye, Activity, Globe, CheckCircle2, Clock } from 'lucide-react';
+import HooterPanel from '../../components/authority/HooterPanel';
+import WalletChip from '../../components/wallet/WalletChip';
+import IdLookup from '../../components/authority/IdLookup';
+import AuthorityMap, { type MapViewCommand } from '../../components/maps/AuthorityMap';
 import AuthoritySidebar from '../../components/layout/AuthoritySidebar';
 import type { ZoneData } from '../../components/maps/TouristMap';
 import { CLAY_COLORS as C, CLAY_CARD_STYLE as clayCard } from '../../theme/clayTheme';
@@ -71,10 +75,24 @@ export default function AuthorityDashboard() {
     const [summary, setSummary] = useState({ totalUsers: 0, openIncidents: 0, sosLastHour: 0, activeUsersToday: 0, totalTourists: 0, totalResidents: 0, totalBusinesses: 0 });
     const [loading, setLoading] = useState(true);
     const [zones, setZones] = useState<ZoneData[]>([]);
-    const [userLocations, setUserLocations] = useState<Record<string, { lat: number; lng: number; role?: string; name?: string; timestamp: number }>>({});
+    const [userLocations, setUserLocations] = useState<Record<string, { lat: number; lng: number; role?: string; name?: string; timestamp: number; areaSafety?: number }>>({});
     const [focusLocation, setFocusLocation] = useState<{ lat: number; lng: number } | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
     const [filteredUser, setFilteredUser] = useState<string | null>(null);
+    const [followLive, setFollowLive] = useState(false);
+    const [focusNonce, setFocusNonce] = useState(0);
+    const [viewCommand, setViewCommand] = useState<MapViewCommand | null>(null);
+    const [hooterOpen, setHooterOpen] = useState(false);
+    const [searchParams, setSearchParams] = useSearchParams();
+    const trackId = searchParams.get('track');
+    const trackIncidentId = searchParams.get('incident');
+    const mapSectionRef = useRef<HTMLDivElement | null>(null);
+    const [, setClockTick] = useState(0);
+    useEffect(() => {
+        if (!followLive) return;
+        const id = setInterval(() => setClockTick(n => n + 1), 1000);
+        return () => clearInterval(id);
+    }, [followLive]);
     const [notice, setNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
     const [drawColor, setDrawColor] = useState<string>(C.high);
     const [emergencyAlerts, setEmergencyAlerts] = useState<any[]>([]);
@@ -115,18 +133,20 @@ export default function AuthorityDashboard() {
         });
     };
 
+    // `loading` starts true and is only cleared once: background refreshes must not blank the whole dashboard.
     const fetchDashboardData = async () => {
-        setLoading(true);
         try {
-            const [incidentsRes, summaryRes, zonesRes, locationsRes, checkinsRes, riskPulseRes, sosByTypeRes, sosBySourceRes] = await Promise.all([
+            // Slow, non-critical panels (risk pulse is AI-backed) start now but never hold up the first paint.
+            const secondary = Promise.all([
+                api.get('/locations/checkins/all').catch(() => ({ data: { success: false, data: [] } })),
+                api.get('/analytics/risk-pulse').catch(() => ({ data: { success: false, data: null } })),
+                api.get('/incidents?sos=true&limit=12').catch(() => ({ data: { success: false, data: [] } })),
+            ]);
+            const [incidentsRes, summaryRes, zonesRes, locationsRes] = await Promise.all([
                 api.get('/incidents?limit=10'),
                 api.get('/analytics/summary'),
                 api.get('/zones'),
                 api.get('/locations/all'),
-                api.get('/locations/checkins/all').catch(() => ({ data: { success: false, data: [] } })),
-                api.get('/analytics/risk-pulse').catch(() => ({ data: { success: false, data: null } })),
-                api.get('/incidents?incident_type=sos_emergency&limit=12').catch(() => ({ data: { success: false, data: [] } })),
-                api.get('/incidents?source=sos_panic&limit=12').catch(() => ({ data: { success: false, data: [] } })),
             ]);
 
             if (incidentsRes.data.success) setIncidents(incidentsRes.data.data);
@@ -137,23 +157,6 @@ export default function AuthorityDashboard() {
                 setEmergencyAlerts(liveSos);
             }
 
-            const sosCombined = [
-                ...(sosByTypeRes.data?.success ? (sosByTypeRes.data.data || []) : []),
-                ...(sosBySourceRes.data?.success ? (sosBySourceRes.data.data || []) : []),
-            ];
-
-            if (sosCombined.length > 0) {
-                const dedupedSos = new Map<string, any>();
-                sosCombined.forEach((incident: any) => {
-                    if (incident?._id) dedupedSos.set(String(incident._id), incident);
-                });
-
-                const liveSos = Array.from(dedupedSos.values())
-                    .filter((incident: any) => !isClosedSos(incident))
-                    .slice(0, 6);
-
-                setEmergencyAlerts(liveSos);
-            }
             if (summaryRes.data.success) {
                 const d = summaryRes.data.data;
                 setSummary({
@@ -181,10 +184,34 @@ export default function AuthorityDashboard() {
                         };
                     }
                 });
-                setUserLocations(locMap);
+                // Merge: a live socket update newer than the stored log must not be rolled back.
+                setUserLocations(prev => {
+                    const merged: any = { ...locMap };
+                    for (const [id, live] of Object.entries(prev)) {
+                        if (!merged[id] || (live as any).timestamp > merged[id].timestamp) merged[id] = live;
+                    }
+                    return merged;
+                });
             }
+            setLoading(false);
+
+            const [checkinsRes, riskPulseRes, sosRes] = await secondary;
             if (checkinsRes.data.success) setCheckins(checkinsRes.data.data || []);
             if (riskPulseRes.data.success) setRiskPulse(riskPulseRes.data.data || null);
+            const sosCombined = sosRes.data?.success ? (sosRes.data.data || []) : [];
+
+            if (sosCombined.length > 0) {
+                const dedupedSos = new Map<string, any>();
+                sosCombined.forEach((incident: any) => {
+                    if (incident?._id) dedupedSos.set(String(incident._id), incident);
+                });
+
+                const liveSos = Array.from(dedupedSos.values())
+                    .filter((incident: any) => !isClosedSos(incident))
+                    .slice(0, 6);
+
+                setEmergencyAlerts(liveSos);
+            }
         } catch (err) { console.error(err); } finally { setLoading(false); }
     };
 
@@ -192,13 +219,22 @@ export default function AuthorityDashboard() {
         fetchDashboardData();
         const interval = setInterval(fetchDashboardData, 60000);
         if (socket) {
+            // Counters (open incidents, SOS, active users) refresh as soon as anything changes.
+            let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+            const scheduleRefresh = () => {
+                clearTimeout(refreshTimer);
+                refreshTimer = setTimeout(fetchDashboardData, 1500);
+            };
+            const refreshEvents = ['incident:new', 'incident:updated', 'incident-updated', 'sos:triggered', 'zones:changed'];
+            refreshEvents.forEach((evt) => socket.on(evt, scheduleRefresh));
+
+            // The same incident arrives on several events (new-incident, incident:new, sos:triggered): merge by id.
             const onNewIncident = (incident: any) => {
-                setIncidents(prev => [incident, ...prev.slice(0, 9)]);
+                setIncidents(prev => [incident, ...prev.filter(item => item._id !== incident._id)].slice(0, 10));
                 if (incident.incident_type === 'checkin') {
-                    setCheckins(prev => [incident, ...prev.slice(0, 49)]);
+                    setCheckins(prev => [incident, ...prev.filter(item => item._id !== incident._id)].slice(0, 50));
                 }
                 upsertEmergencyAlert(incident);
-                fetchDashboardData();
             };
 
             const onIncidentCreated = (incident: any) => {
@@ -211,7 +247,7 @@ export default function AuthorityDashboard() {
 
             const onSosTriggered = (incident: any) => {
                 upsertEmergencyAlert(incident);
-                setIncidents(prev => [incident, ...prev.slice(0, 9)]);
+                setIncidents(prev => [incident, ...prev.filter(item => item._id !== incident._id)].slice(0, 10));
             };
 
             const onIncidentUpdated = (incident: any) => {
@@ -231,7 +267,7 @@ export default function AuthorityDashboard() {
                 if (data.userId && lat && lng) {
                     setUserLocations(prev => ({
                         ...prev,
-                        [data.userId]: { lat, lng, role: data.role, name: data.name, timestamp: Date.now() }
+                        [data.userId]: { ...prev[data.userId], lat, lng, role: data.role || prev[data.userId]?.role, name: data.name || prev[data.userId]?.name, timestamp: Date.now(), areaSafety: data.area_safety?.score ?? prev[data.userId]?.areaSafety }
                     }));
                 }
             };
@@ -278,6 +314,8 @@ export default function AuthorityDashboard() {
 
             return () => {
                 clearInterval(interval);
+                clearTimeout(refreshTimer);
+                refreshEvents.forEach((evt) => socket.off(evt, scheduleRefresh));
                 socket.off('new-incident', onNewIncident);
                 socket.off('incident:new', onIncidentCreated);
                 socket.off('sos:triggered', onSosTriggered);
@@ -368,7 +406,88 @@ export default function AuthorityDashboard() {
         }
     };
 
-    const filteredLocations = filteredUser ? { [filteredUser]: userLocations[filteredUser] } : userLocations;
+    // "Track on map" from an SOS alert: open on the person, centre on them, and follow every update.
+    useEffect(() => {
+        if (!trackId) return;
+        setFilteredUser(trackId);
+        setFollowLive(true);
+        setTimeout(() => mapSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 150);
+
+        let cancelled = false;
+        (async () => {
+            // Seed the map immediately from the last stored position / the SOS coordinates;
+            // live location events then take over.
+            let seed: { lat: number; lng: number; at: number; name?: string; role?: string } | null = null;
+            try {
+                const res = await api.get(`/locations/user/${trackId}`, { params: { limit: 1 } });
+                const log = res.data?.data?.[0];
+                if (log) seed = { lat: log.latitude, lng: log.longitude, at: new Date(log.recorded_at).getTime() };
+            } catch { /* fall through to the incident coordinates */ }
+            if (!seed && trackIncidentId) {
+                try {
+                    const res = await api.get(`/incidents/${trackIncidentId}`);
+                    const inc = res.data?.data;
+                    if (inc?.latitude != null && inc?.longitude != null) {
+                        seed = { lat: inc.latitude, lng: inc.longitude, at: Date.now(), name: inc.reporter?.full_name, role: inc.reporter?.role };
+                    }
+                } catch { /* nothing more to try */ }
+            }
+            if (cancelled || !seed) return;
+            const found = seed;
+            setUserLocations(prev => prev[trackId] ? prev : { ...prev, [trackId]: { lat: found.lat, lng: found.lng, role: found.role || 'tourist', name: found.name, timestamp: found.at } });
+            setFocusLocation({ lat: found.lat, lng: found.lng });
+        })();
+        return () => { cancelled = true; };
+    }, [trackId, trackIncidentId]);
+
+    useEffect(() => {
+        if (!followLive || !filteredUser) return;
+        const loc = userLocations[filteredUser];
+        if (loc) setFocusLocation({ lat: loc.lat, lng: loc.lng });
+    }, [userLocations, followLive, filteredUser]);
+
+    const showNotice = (type: 'success' | 'error', message: string) => {
+        setNotice({ type, message });
+        setTimeout(() => setNotice((n) => (n?.message === message ? null : n)), 4000);
+    };
+
+    // Reset View: stop following anyone and return to the overview of the whole region.
+    const stopTracking = () => {
+        setFollowLive(false);
+        setFilteredUser(null);
+        setFocusLocation(null);
+        setViewCommand({ type: 'reset', nonce: Date.now() });
+        if (trackId) setSearchParams({}, { replace: true });
+    };
+
+    // Focus Live: the tracked person if any, otherwise the devices reporting right now.
+    const focusLive = () => {
+        const nonce = Date.now();
+        const entries = Object.entries(userLocations).filter(([, l]) => Number.isFinite(l.lat) && Number.isFinite(l.lng));
+        if (entries.length === 0) {
+            showNotice('error', 'No live devices to focus on yet. They appear here as soon as a device sends its location.');
+            return;
+        }
+        if (filteredUser && userLocations[filteredUser]) {
+            const l = userLocations[filteredUser];
+            setFocusLocation({ lat: l.lat, lng: l.lng });
+            setFocusNonce(nonce);
+            setViewCommand({ type: 'focus', lat: l.lat, lng: l.lng, nonce });
+            return;
+        }
+        const LIVE_WINDOW_MS = 10 * 60_000;
+        const live = entries.filter(([, l]) => Date.now() - l.timestamp <= LIVE_WINDOW_MS);
+        const use = live.length ? live : [entries.reduce((a, b) => (b[1].timestamp > a[1].timestamp ? b : a))];
+        if (!live.length) showNotice('error', 'No device has reported in the last 10 minutes. Showing the most recent known position.');
+        if (use.length === 1) {
+            const [, l] = use[0];
+            setViewCommand({ type: 'focus', lat: l.lat, lng: l.lng, nonce });
+        } else {
+            setViewCommand({ type: 'fit', points: use.map(([, l]) => [l.lat, l.lng] as [number, number]), nonce });
+        }
+    };
+
+    const filteredLocations = filteredUser ? (userLocations[filteredUser] ? { [filteredUser]: userLocations[filteredUser] } : {}) : userLocations;
 
     /* Count users by role from live locations */
     const liveRoleCounts = Object.values(userLocations).reduce((acc, u) => {
@@ -403,6 +522,7 @@ export default function AuthorityDashboard() {
     return (
         <div style={{ display: 'flex', minHeight: '100vh', background: C.bg, fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
             <AuthoritySidebar />
+            <HooterPanel open={hooterOpen} onClose={() => setHooterOpen(false)} liveUserIds={Object.keys(userLocations)} />
 
             <main className="page-with-sidebar" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: '100vh', padding: 0 }}>
                 {/* Top bar */}
@@ -422,6 +542,11 @@ export default function AuthorityDashboard() {
                                 <span style={{ fontSize: '0.62rem', fontWeight: 600, color: C.textMuted }}>{rb.label}</span>
                             </div>
                         ))}
+                        <IdLookup />
+                        <WalletChip />
+                        <button type="button" onClick={() => setHooterOpen(true)} aria-label="Open hooter controls" style={{ background: '#B42318', color: '#FFFFFF', border: 'none', borderRadius: 12, padding: '8px 14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'inherit', fontWeight: 800, fontSize: '0.78rem', boxShadow: '0 4px 12px rgba(180,35,24,0.3)' }}>
+                            <Megaphone size={14} /> Hooter
+                        </button>
                         <button onClick={fetchDashboardData} style={{ background: C.surfaceAlt, border: `1px solid ${C.border}`, borderRadius: 12, padding: '8px 14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'inherit', fontWeight: 700, fontSize: '0.78rem', color: C.text, boxShadow: '4px 4px 8px rgba(27,29,42,0.06), -2px -2px 6px rgba(255,255,255,0.9)', transition: 'all 0.15s' }}>
                             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> <span className="refresh-text">{t('refresh')}</span>
                         </button>
@@ -489,6 +614,7 @@ export default function AuthorityDashboard() {
                                                     </div>
                                                 </div>
                                             </div>
+                                            {alert.metadata?.sos_triage && <div style={{ maxWidth: 520 }}><TriageBadge triage={alert.metadata.sos_triage} onDark /></div>}
                                         </div>
                                     </div>
 
@@ -497,7 +623,7 @@ export default function AuthorityDashboard() {
                                             {risk.confidenceBand} confidence
                                         </span>
                                         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                                            <button onClick={() => setFocusLocation({ lat: alert.latitude, lng: alert.longitude })} style={{ background: 'rgba(255,255,255,0.2)', backdropFilter: 'blur(4px)', border: '1px solid rgba(255,255,255,0.3)', borderRadius: 10, padding: '8px 16px', fontFamily: 'inherit', fontWeight: 800, cursor: 'pointer', color: '#FFFFFF', fontSize: '0.8rem', transition: 'all 0.2s' }}>
+                                            <button onClick={() => { const lat = Number(alert.latitude); const lng = Number(alert.longitude); if (Number.isFinite(lat) && Number.isFinite(lng)) { setFocusLocation({ lat, lng }); setViewCommand({ type: 'focus', lat, lng, nonce: Date.now() }); mapSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }); } }} style={{ background: 'rgba(255,255,255,0.2)', backdropFilter: 'blur(4px)', border: '1px solid rgba(255,255,255,0.3)', borderRadius: 10, padding: '8px 16px', fontFamily: 'inherit', fontWeight: 800, cursor: 'pointer', color: '#FFFFFF', fontSize: '0.8rem', transition: 'all 0.2s' }}>
                                                 Track Location
                                             </button>
                                             <button onClick={() => {
@@ -552,19 +678,13 @@ export default function AuthorityDashboard() {
                         </div>
                         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                             <button
-                                onClick={() => {
-                                    setFilteredUser(null);
-                                    setFocusLocation(null);
-                                }}
+                                onClick={stopTracking}
                                 style={{ background: C.surfaceAlt, border: `1px solid ${C.border}`, borderRadius: 12, padding: '8px 14px', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer', color: C.text }}
                             >
                                 Reset View
                             </button>
                             <button
-                                onClick={() => {
-                                    const first = Object.values(userLocations)[0];
-                                    if (first) setFocusLocation({ lat: first.lat, lng: first.lng });
-                                }}
+                                onClick={focusLive}
                                 style={{ background: 'linear-gradient(135deg, #6C63FF, #8B85FF)', border: 'none', borderRadius: 12, padding: '8px 14px', fontFamily: 'inherit', fontWeight: 700, fontSize: '0.75rem', cursor: 'pointer', color: '#FFFFFF', boxShadow: '0 6px 12px rgba(108,99,255,0.25)' }}
                             >
                                 Focus Live
@@ -575,12 +695,25 @@ export default function AuthorityDashboard() {
 
                 {/* Map */}
                 <div className="responsive-container" style={{ padding: '20px clamp(12px, 3vw, 28px) 0', flex: 1, position: 'relative', minHeight: 400 }}>
-                    <div className="responsive-map-container" style={{ ...clayCard, overflow: 'hidden', height: 480, position: 'relative', padding: 0 }}>
+                    <div ref={mapSectionRef} className="responsive-map-container" style={{ ...clayCard, overflow: 'hidden', height: 480, position: 'relative', padding: 0 }}>
+                        {followLive && filteredUser && (
+                            <div role="status" style={{ position: 'absolute', top: 12, left: '50%', transform: 'translateX(-50%)', zIndex: 600, background: '#B42318', color: '#fff', borderRadius: 999, padding: '8px 16px', fontSize: '0.78rem', fontWeight: 800, boxShadow: '0 6px 16px rgba(180,35,24,0.35)', display: 'flex', gap: 10, alignItems: 'center', maxWidth: 'calc(100% - 24px)' }}>
+                                <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#fff' }} />
+                                <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                    Live tracking · {userLocations[filteredUser]?.name || 'selected user'}
+                                    {userLocations[filteredUser] ? ` · updated ${Math.max(0, Math.round((Date.now() - userLocations[filteredUser].timestamp) / 1000))}s ago` : ' · waiting for location…'}
+                                </span>
+                                <button type="button" onClick={stopTracking} style={{ background: 'rgba(255,255,255,0.2)', color: '#fff', border: 'none', borderRadius: 999, padding: '3px 10px', fontWeight: 800, cursor: 'pointer', fontFamily: 'inherit' }}>Stop</button>
+                            </div>
+                        )}
                         <AuthorityMap
                             zones={zones}
                             incidents={incidents}
                             userLocations={filteredLocations}
                             focusLocation={focusLocation}
+                            focusNonce={focusNonce}
+                            viewCommand={viewCommand}
+                            trackedUserId={followLive ? filteredUser : null}
                             onZoneCreated={handleZoneCreated}
                             onZoneDeleted={handleZoneDeleted}
                             drawColor={drawColor}
@@ -629,7 +762,7 @@ export default function AuthorityDashboard() {
                             </div>
 
                             {filteredUser && (
-                                <button onClick={() => { setFilteredUser(null); setFocusLocation(null); }} style={{ background: 'linear-gradient(135deg, #F87171, #EF4444)', color: '#FFFFFF', border: 'none', borderRadius: 12, padding: '8px 14px', fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', cursor: 'pointer', boxShadow: '0 4px 12px rgba(248,113,113,0.3)' }}>
+                                <button onClick={stopTracking} style={{ background: 'linear-gradient(135deg, #F87171, #EF4444)', color: '#FFFFFF', border: 'none', borderRadius: 12, padding: '8px 14px', fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', cursor: 'pointer', boxShadow: '0 4px 12px rgba(248,113,113,0.3)' }}>
                                     Clear User Filter ✕
                                 </button>
                             )}
@@ -810,7 +943,7 @@ export default function AuthorityDashboard() {
                                 <p style={{ fontSize: '0.78rem', fontWeight: 700, color: C.textMuted }}>{t('noCheckins24h')}</p>
                             </div>
                         ) : (
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 0 }}>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(280px, 100%), 1fr))', gap: 0 }}>
                                 {checkins.slice(0, 12).map((ci, idx) => (
                                     <div
                                         key={ci._id || idx}

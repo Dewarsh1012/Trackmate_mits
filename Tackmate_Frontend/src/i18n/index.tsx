@@ -1,14 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
 import en, { type TranslationKeys } from './locales/en';
-import hi from './locales/hi';
-import bn from './locales/bn';
-import mr from './locales/mr';
-import gu from './locales/gu';
-import te from './locales/te';
-import ta from './locales/ta';
-import ur from './locales/ur';
-import kn from './locales/kn';
-import pa from './locales/pa';
 
 export type LanguageCode = 'en' | 'hi' | 'bn' | 'mr' | 'gu' | 'te' | 'ta' | 'ur' | 'kn' | 'pa';
 
@@ -34,8 +25,17 @@ export const LANGUAGES: LanguageOption[] = [
 
 type TranslationCatalog = Partial<TranslationKeys>;
 
-const translations: Record<LanguageCode, TranslationCatalog> = {
-    en, hi, bn, mr, gu, te, ta, ur, kn, pa,
+// English ships with the app; every other language is fetched the first time it's selected.
+const loaders: Record<Exclude<LanguageCode, 'en'>, () => Promise<{ default: TranslationCatalog }>> = {
+    hi: () => import('./locales/hi'),
+    bn: () => import('./locales/bn'),
+    mr: () => import('./locales/mr'),
+    gu: () => import('./locales/gu'),
+    te: () => import('./locales/te'),
+    ta: () => import('./locales/ta'),
+    ur: () => import('./locales/ur'),
+    kn: () => import('./locales/kn'),
+    pa: () => import('./locales/pa'),
 };
 
 const STORAGE_KEY = 'trackmate_language';
@@ -53,7 +53,7 @@ const LanguageContext = createContext<LanguageContextType | null>(null);
 function getInitialLanguage(): LanguageCode {
     try {
         const stored = localStorage.getItem(STORAGE_KEY);
-        if (stored && stored in translations) return stored as LanguageCode;
+        if (stored && (stored === 'en' || stored in loaders)) return stored as LanguageCode;
     } catch { /* noop */ }
     return 'en';
 }
@@ -66,9 +66,17 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
         try { localStorage.setItem(STORAGE_KEY, lang); } catch { /* noop */ }
     }, []);
 
+    const [catalogs, setCatalogs] = useState<Partial<Record<LanguageCode, TranslationCatalog>>>({ en });
+    useEffect(() => {
+        if (language === 'en' || catalogs[language]) return;
+        let cancelled = false;
+        loaders[language]().then((mod) => { if (!cancelled) setCatalogs((prev) => ({ ...prev, [language]: mod.default })); }).catch(() => undefined);
+        return () => { cancelled = true; };
+    }, [language, catalogs]);
+
     const t = useCallback((key: keyof TranslationKeys): string => {
-        return translations[language]?.[key] ?? en[key] ?? String(key);
-    }, [language]);
+        return catalogs[language]?.[key] ?? en[key] ?? String(key);
+    }, [language, catalogs]);
 
     const currentLang = LANGUAGES.find(l => l.code === language) ?? LANGUAGES[0];
     const dir = currentLang.dir;

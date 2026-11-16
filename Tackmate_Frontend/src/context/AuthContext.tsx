@@ -11,6 +11,7 @@ interface AuthContextType {
     login: (email: string, password: string) => Promise<User>;
     register: (data: Record<string, unknown>) => Promise<{ user: User; blockchainId: string }>;
     logout: () => void;
+    updateUser: (patch: Partial<User>) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -24,13 +25,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (token) {
             api.get('/auth/me')
                 .then((res) => {
-                    setUser(res.data.data);
+                    // /auth/me returns the raw profile (`_id`); the login response uses `id`. Keep one shape,
+                    // otherwise anything keyed on user.id (realtime rooms, location updates) breaks after a reload.
+                    const data = res.data.data;
+                    setUser({ ...data, id: data.id ?? data._id });
                 })
-                .catch(() => {
-                    localStorage.removeItem('token');
-                    localStorage.removeItem('user');
-                    setToken(null);
-                    setUser(null);
+                .catch((err) => {
+                    // Only an explicit rejection of the token ends the session. A dropped connection or a
+                    // server restart must not sign someone out (they may be in a no-signal area mid-trip).
+                    if (err?.response?.status === 401 || err?.response?.status === 403) {
+                        localStorage.removeItem('token');
+                        localStorage.removeItem('user');
+                        setToken(null);
+                        setUser(null);
+                        return;
+                    }
+                    try {
+                        const cached = localStorage.getItem('user');
+                        if (cached) setUser(JSON.parse(cached));
+                    } catch { /* unreadable cache: fall through to the login screen */ }
                 })
                 .finally(() => setIsLoading(false));
         } else {
@@ -65,8 +78,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(null);
     };
 
+    const updateUser = (patch: Partial<User>) => setUser((prev) => (prev ? { ...prev, ...patch } : prev));
+
     return (
-        <AuthContext.Provider value={{ user, token, isLoading, login, register, logout }}>
+        <AuthContext.Provider value={{ user, token, isLoading, login, register, logout, updateUser }}>
             {children}
         </AuthContext.Provider>
     );

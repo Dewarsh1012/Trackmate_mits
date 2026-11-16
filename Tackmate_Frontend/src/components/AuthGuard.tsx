@@ -23,7 +23,8 @@ export default function AuthGuard({ children, role }: Props) {
     return <Navigate to="/auth" replace />;
   }
 
-  if (user.role !== role) {
+  const allowed = user.role === role || (user.role === 'admin' && role === 'authority');
+  if (!allowed) {
     return (
       <div className="page-loading" style={{ gap: '24px' }}>
         <div style={{ fontSize: '4rem' }}>🚫</div>

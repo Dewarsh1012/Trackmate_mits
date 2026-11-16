@@ -76,7 +76,7 @@ export default function ResidentDashboard() {
         };
 
         try {
-            const pos = await new Promise<GeolocationPosition>((res, rej) => navigator.geolocation.getCurrentPosition(res, rej)).catch(() => null);
+            const pos = await new Promise<GeolocationPosition>((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, { timeout: 2000, maximumAge: 60000, enableHighAccuracy: false })).catch(() => null);
             payload.latitude = pos?.coords.latitude || payload.latitude;
             payload.longitude = pos?.coords.longitude || payload.longitude;
 
@@ -86,7 +86,7 @@ export default function ResidentDashboard() {
                 return;
             }
 
-            await api.post('/incidents', payload);
+            await api.post('/incidents', payload, { timeout: 6000 });
             setSosSuccess(true); setTimeout(() => setSosSuccess(false), 5000);
         } catch {
             enqueueOfflineSos(payload, 'resident');
@@ -109,11 +109,19 @@ export default function ResidentDashboard() {
                     setNotice('Guardian assist request received nearby.');
                 };
 
+                // Ward stats (open incidents, safety score) follow incident changes live.
+                let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+                const scheduleRefresh = () => { clearTimeout(refreshTimer); refreshTimer = setTimeout(fetchWardData, 1500); };
+                socket.on('new-incident', scheduleRefresh);
+                socket.on('incident-updated', scheduleRefresh);
                 socket.on('new-incident', onNewIncident);
                 socket.on('guardian:dispatch', onGuardianDispatch);
 
                 return () => {
                     clearInterval(interval);
+                    clearTimeout(refreshTimer);
+                    socket.off('new-incident', scheduleRefresh);
+                    socket.off('incident-updated', scheduleRefresh);
                     socket.off('new-incident', onNewIncident);
                     socket.off('guardian:dispatch', onGuardianDispatch);
                 };
@@ -171,7 +179,7 @@ export default function ResidentDashboard() {
         </div>
     );
 
-    const score = analytics?.safety_score || 85;
+    const score = analytics?.safety_score ?? 100;
 
     return (
         <div style={{ flex: 1, overflowY: 'auto', padding: 'clamp(14px, 3vw, 24px)', background: C.bg, fontFamily: "'Plus Jakarta Sans', sans-serif", paddingBottom: 100 }}>
@@ -217,7 +225,7 @@ export default function ResidentDashboard() {
                 </div>
                 <div style={{ background: 'linear-gradient(135deg, #1B1D2A, #252840)', borderRadius: 20, padding: '16px', display: 'flex', flexDirection: 'column', gap: 8, boxShadow: '6px 6px 14px rgba(27,29,42,0.10), -3px -3px 10px rgba(255,255,255,0.9)' }}>
                     <Users size={24} color={C.primary} />
-                    <p style={{ fontSize: '1.8rem', fontWeight: 800, color: '#FFFFFF', margin: 0, fontFamily: "'JetBrains Mono', monospace" }}>{analytics?.resident_count || 42}</p>
+                    <p style={{ fontSize: '1.8rem', fontWeight: 800, color: '#FFFFFF', margin: 0, fontFamily: "'JetBrains Mono', monospace" }}>{analytics?.resident_count ?? 0}</p>
                     <p style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,0.5)', margin: 0 }}>Active Circle</p>
                 </div>
             </section>

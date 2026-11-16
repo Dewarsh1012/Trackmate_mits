@@ -6,6 +6,10 @@ import { CLAY_COLORS as C, CLAY_CARD_STYLE as clayCard } from '../../theme/clayT
 
 const clayInput: React.CSSProperties = {
     width: '100%',
+    minWidth: 0,
+    boxSizing: 'border-box',
+    display: 'block',
+    marginTop: 4,
     padding: '11px 14px',
     background: C.surfaceAlt,
     border: `1px solid ${C.border}`,
@@ -191,9 +195,9 @@ export default function TouristItinerary() {
     }
 
     return (
-        <div style={{ minHeight: '100vh', background: C.bg, fontFamily: "'Plus Jakarta Sans', sans-serif", padding: '24px' }}>
-            <div style={{ maxWidth: 1200, margin: '0 auto', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
-                <div style={{ ...clayCard, padding: 20 }}>
+        <div style={{ minHeight: '100vh', background: C.bg, fontFamily: "'Plus Jakarta Sans', sans-serif", padding: 'clamp(12px, 3vw, 24px)' }}>
+            <div className="responsive-grid" style={{ maxWidth: 1200, margin: '0 auto', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+                <div className="trip-card" style={{ ...clayCard, padding: 20 }}>
                     <h2 style={{ margin: 0, fontWeight: 800, fontSize: '1.1rem', color: C.text }}>Trip Plan</h2>
                     <p style={{ margin: '4px 0 16px', color: C.textMuted, fontSize: '0.82rem' }}>Create or update your travel plan.</p>
 
@@ -203,7 +207,7 @@ export default function TouristItinerary() {
                         </div>
                     )}
 
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                    <div className="trip-form-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                         <div>
                             <label style={{ fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', color: C.textMuted }}>Destination</label>
                             <input value={destination} onChange={(e) => setDestination(e.target.value)} style={clayInput} />
@@ -231,8 +235,8 @@ export default function TouristItinerary() {
                     </button>
                 </div>
 
-                <div style={{ ...clayCard, padding: 20 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                <div className="trip-card" style={{ ...clayCard, padding: 20 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
                         <div>
                             <h2 style={{ margin: 0, fontWeight: 800, fontSize: '1.1rem', color: C.text }}>Itinerary Stops</h2>
                             <p style={{ margin: '4px 0', color: C.textMuted, fontSize: '0.82rem' }}>Add your planned locations and contacts.</p>
@@ -244,7 +248,7 @@ export default function TouristItinerary() {
                         )}
                     </div>
 
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                    <div className="trip-form-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                         <div>
                             <label style={{ fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', color: C.textMuted }}>Stop Name</label>
                             <input value={stopName} onChange={(e) => setStopName(e.target.value)} style={clayInput} />

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Shield, CheckCircle2, XCircle, ArrowLeft, Loader2 } from 'lucide-react';
 import api from '../../lib/api';
+import AttestationList from '../../components/wallet/AttestationList';
 
 const C = {
     bg: '#F0EDFA',
@@ -105,15 +106,33 @@ export default function VerifyPage() {
                                         </>
                                     )}
                                 </div>
+
+                                <div style={{ marginTop: 20 }}>
+                                    <div style={{ fontSize: '0.7rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em', color: C.textMuted, marginBottom: 8 }}>Wallet verification</div>
+                                    <AttestationList items={result.wallet_attestations || []} />
+                                </div>
+                            </div>
+                        </div>
+                    ) : result?.name ? (
+                        // The ID exists, but a tourist ID is only "valid" during an active trip.
+                        <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 24 }}>
+                            <div style={{ background: `${C.moderate}18`, border: `1px solid ${C.moderate}`, padding: 20, textAlign: 'center', borderRadius: 18 }}>
+                                <h2 style={{ fontSize: '1.2rem', fontWeight: 800, margin: '0 0 6px', color: C.text }}>{result.name}</h2>
+                                <p style={{ margin: '0 0 10px', fontWeight: 700, fontSize: '0.82rem', color: C.textSecondary }}>This ID exists, but there is no active trip right now, so it is not currently valid for entry.</p>
+                                <div style={{ background: C.surfaceAlt, padding: 8, fontFamily: "'JetBrains Mono', monospace", fontSize: '0.8rem', fontWeight: 700, borderRadius: 10 }}>ID: {result.blockchain_id}</div>
+                            </div>
+                            <div style={{ marginTop: 20 }}>
+                                <div style={{ fontSize: '0.7rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em', color: C.textMuted, marginBottom: 8 }}>Wallet verification</div>
+                                <AttestationList items={result.wallet_attestations || []} />
                             </div>
                         </div>
                     ) : (
                         <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 24 }}>
                             <div style={{ background: `${C.high}18`, border: `1px solid ${C.high}`, padding: 24, textAlign: 'center', color: C.high, borderRadius: 18 }}>
                                 <XCircle size={48} style={{ margin: '0 auto 16px' }} />
-                                <h2 style={{ fontSize: '1.4rem', fontWeight: 800, margin: '0 0 8px', textTransform: 'uppercase', color: C.high }}>Verification Failed</h2>
-                                <p style={{ margin: '0 0 16px', fontWeight: 600, fontSize: '0.85rem', color: C.textSecondary }}>ID not found or expired.</p>
-                                <div style={{ background: C.surfaceAlt, padding: '8px', fontFamily: "'JetBrains Mono', monospace", fontSize: '0.75rem', fontWeight: 700, color: C.text, borderRadius: 10, border: `1px solid ${C.border}` }}>
+                                <h2 style={{ fontSize: '1.4rem', fontWeight: 800, margin: '0 0 8px', textTransform: 'uppercase', color: C.high }}>Verification failed</h2>
+                                <p style={{ margin: '0 0 16px', fontWeight: 600, fontSize: '0.85rem', color: C.textSecondary }}>ID not found.</p>
+                                <div style={{ background: C.surfaceAlt, padding: '8px', fontFamily: "'JetBrains Mono', monospace", fontSize: '0.8rem', fontWeight: 700, borderRadius: 10 }}>
                                     ID: {blockchainId || 'Unknown'}
                                 </div>
                             </div>
